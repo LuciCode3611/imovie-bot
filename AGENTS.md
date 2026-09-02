@@ -46,6 +46,8 @@ src/
   ```
 
 - Inline button layout: one row of quality buttons (480p / 720p / 1080p, labels in Persian), plus a "صفحه در زرفیلم" URL button.
+- Custom emoji: inline buttons use premium custom emojis via `icon_custom_emoji_id` (owner has Telegram Premium, so bot-sent messages qualify). Emoji IDs are supplied by the owner and kept in a config mapping (role → ID); when an ID is unset or missing, buttons fall back to plain-text emoji so the bot never breaks.
+- Button colors via `ButtonStyle`: 480p → PRIMARY, 720p → LINK, 1080p → SUCCESS (best quality highlighted), URL button → LINK, destructive/disabled or missing-link states → DANGER.
 - Rich metadata message example:
 
   ```

@@ -82,6 +82,19 @@ unit-testable against saved fixture pages.
 Models → Telegram HTML (RTL Persian, parse mode `HTML`) and inline keyboard
 markup. Pure functions.
 
+**Button styling & custom emoji** (owner requirement, verified against aiogram
+3.31 / Bot API):
+
+- Buttons carry semantic colors via `InlineKeyboardButton.style`
+  (`aiogram.enums.button_style.ButtonStyle`): 480p → `PRIMARY`, 720p → `LINK`,
+  1080p → `SUCCESS`, URL button → `LINK`, disabled/missing-link states →
+  `DANGER`.
+- Premium custom emoji via `InlineKeyboardButton.icon_custom_emoji_id`, valid
+  because the bot owner has Telegram Premium. Emoji IDs live in a config
+  mapping (role → ID, e.g. `EMOJI_MOVIE`, `EMOJI_DOWNLOAD_1080`); unset IDs
+  fall back to plain-text emoji so buttons never fail to render. Owner will
+  supply concrete IDs during implementation.
+
 **`repos/cache.py` — TTLCache**
 
 `asyncio`-safe in-memory key→value with per-entry TTL (searches: 1 h, movie
@@ -159,7 +172,8 @@ solving.
   and deterministic.
 - **ZarfilmClient**: httpx `MockTransport` — search, details, session-expiry →
   re-login retry, transport-error retry, NotFound.
-- **Formatting**: snapshot-style tests for message text and keyboard layout.
+- **Formatting**: snapshot-style tests for message text and keyboard layout,
+  including style/icon fallback when custom emoji IDs are unset.
 - **Handlers**: aiogram's dispatcher test utilities for allowlist, debounce,
   and error middleware.
 - Manual acceptance: live run against zarfilm before each milestone.
@@ -188,5 +202,7 @@ solving.
 - Exact login endpoint/field names and download-box markup need a
   logged-in capture (owner's credentials) during implementation milestone 2 —
   the parser design accommodates the download box being behind login.
-- UI text/button style defaults in `AGENTS.md` are proposals; owner may adjust
-  them during this spec review.
+- Custom emoji IDs for button icons are supplied by the owner at
+  implementation time and go into the config mapping (Section 3); the
+  remaining UI text templates in `AGENTS.md` are still proposals until the
+  owner finalizes them in this review.
