@@ -29,3 +29,15 @@ def test_emoji_json(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_missing_token_rejected() -> None:
     with pytest.raises(ValidationError):
         Config(_env_file=None, zarfilm_username="u", zarfilm_password="p")
+
+
+def test_empty_env_ids_fall_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALLOWED_USER_IDS", "")
+    cfg = Config(_env_file=None, **_base_env())
+    assert cfg.allowed_user_ids == []
+
+
+def test_comma_separated_ids_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALLOWED_USER_IDS", "111,222")
+    cfg = Config(_env_file=None, **_base_env())
+    assert cfg.allowed_user_ids == [111, 222]
