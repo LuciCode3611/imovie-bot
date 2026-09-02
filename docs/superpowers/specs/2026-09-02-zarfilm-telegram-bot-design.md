@@ -82,18 +82,33 @@ unit-testable against saved fixture pages.
 Models → Telegram HTML (RTL Persian, parse mode `HTML`) and inline keyboard
 markup. Pure functions.
 
-**Button styling & custom emoji** (owner requirement, verified against aiogram
+**Interaction & button spec** (owner-defined; colors verified against aiogram
 3.31 / Bot API):
 
-- Buttons carry semantic colors via `InlineKeyboardButton.style`
-  (`aiogram.enums.button_style.ButtonStyle`): 480p → `PRIMARY`, 720p → `LINK`,
-  1080p → `SUCCESS`, URL button → `LINK`, disabled/missing-link states →
-  `DANGER`.
-- Premium custom emoji via `InlineKeyboardButton.icon_custom_emoji_id`, valid
-  because the bot owner has Telegram Premium. Emoji IDs live in a config
-  mapping (role → ID, e.g. `EMOJI_MOVIE`, `EMOJI_DOWNLOAD_1080`); unset IDs
-  fall back to plain-text emoji so buttons never fail to render. Owner will
-  supply concrete IDs during implementation.
+Drill-down keyboards edit the card message in place
+(`edit_message_reply_markup`); no new card messages are sent except the
+series episode list.
+
+- Movie with a Persian dub: root keyboard `[ دانلود با زبان اصلی (PRIMARY) ]`
+  `[ دانلود با دوبله فارسی (SUCCESS) ]` → quality row
+  `[ 1080p ] [ 720p ] [ 480p ]` (all `PRIMARY`, size hint in label when
+  known) → file row: URL button(s) `⬇ {size} — {host}` + `[ انصراف (DANGER) ]`.
+- Movie without a dub: root keyboard is the quality row directly.
+- Series: root keyboard is season buttons `[ فصل اول ] [ فصل دوم ] …` →
+  quality row (all `PRIMARY`) → tapping a quality sends a compact text
+  message listing per-episode direct links (S01E01, …), and the card keyboard
+  reverts to its root state.
+- `انصراف` always returns the keyboard to the card root; shallow state
+  machine, no multi-level back. The card root also carries a
+  "صفحه در زرفیلم" URL button.
+- Callback data uses short in-memory keys (6-hex → selection state, TTL 1 h)
+  to stay under Telegram's 64-byte `callback_data` limit and reuse parsed
+  movie data without re-scraping on every tap.
+- Custom emoji via `InlineKeyboardButton.icon_custom_emoji_id`, valid because
+  the bot owner has Telegram Premium. Emoji IDs live in a config mapping
+  (role → ID, e.g. `EMOJI_MOVIE`, `EMOJI_DUB`); unset IDs fall back to
+  plain-text emoji so buttons never fail to render. Owner supplies concrete
+  IDs during implementation.
 
 **`repos/cache.py` — TTLCache**
 
@@ -106,20 +121,32 @@ touching callers.
 - `common.py`: `/start`, `/help`; rejection text for non-allowlisted users.
 - `search.py`: text message → search → reply with numbered inline buttons
   (up to 5 results).
-- `details.py`: callback query → fetch movie page → metadata message +
-  quality link buttons.
+- `details.py`: callback query → drill-down keyboard navigation (language →
+  quality → file URL buttons; season → quality → episode-list message),
+  state kept in `repos/state.py`, every step edits the card in place.
 - `admin.py`: `/login` (owner only) accepting a pasted cookie; deletes the
   message immediately after reading it.
 - `middleware.py`: allowlist check; per-user search debounce (one in-flight
   search per user); global error handler → terse Persian error text, logged
   with traceback.
 
+**`repos/state.py` — CallbackState**
+
+In-memory store: short key (6-hex, TTL 1 h) → the parsed `MovieDetails` plus
+the user's current drill-down selection (language / season / quality). Lets
+every button tap re-render keyboards without re-scraping zarfilm and keeps
+`callback_data` under Telegram's 64-byte limit. Swept lazily on write.
+
 **`models/`**
 
-`MovieSummary` (slug, title_en, title_fa, year, poster_url), `DownloadLink`
-(quality, label, url, size_hint), `MovieDetails` (summary + imdb, genres,
-runtime, plot, links), `Config` (bot token, zarfilm credentials,
-`ALLOWED_USER_IDS`, cache TTLs, session path).
+`MovieSummary` (slug, title_en, title_fa, year, poster_url, kind:
+movie|series), `DownloadLink` (quality, url, size_hint, host),
+`MovieDetails` (summary + imdb, genres, runtime, plot; for movies:
+`originals`/`dubs` lists of `DownloadLink`, dub absent when none; for series:
+`seasons` list of `Season(label, qualities)`, `QualityPack(quality,
+episodes)`, `EpisodeLink(episode_label, url, size_hint, host)`), `Config`
+(bot token, zarfilm credentials, `ALLOWED_USER_IDS`, emoji role→ID mapping,
+cache/state TTLs, session path).
 
 **`exceptions.py`**
 
@@ -131,11 +158,17 @@ runtime, plot, links), `Config` (bot token, zarfilm credentials,
 ```
 user text → allowlist middleware → search handler
   → cache miss → ZarfilmClient.search() → parsers → cache
-  → 5 inline result buttons
-button tap → details handler → cache miss → ZarfilmClient.movie()
-  → parsers (JSON-LD + download box) → cache
-  → formatted message + quality link buttons
+  → up to 5 result buttons; tapping one fetches the page once
+  → metadata card + root keyboard (language / qualities / seasons)
+card button tap → callback handler → CallbackState lookup (short key)
+  → drill-down: edit_message_reply_markup per tap
+  → movie quality tap: edit to file URL buttons (size/host labels)
+  → series quality tap: send episode-list message, keyboard reverts to root
+  → انصراف: revert to card root
 ```
+
+Re-scraping happens only on cache miss (search 1 h, movie pages 6 h); all
+drill-down taps reuse the already-parsed page.
 
 ### Session & anti-detection posture
 
@@ -155,7 +188,8 @@ solving.
 | No results | "چیزی پیدا نشد" + suggest trying another spelling |
 | Parse failure (site redesign) | `ParseError`, logged with the HTML sample; user sees generic error |
 | Non-allowlisted user | Terse rejection; nothing executes |
-| Callback for a stale/cached-out slug | Re-run search flow or "منقضی شده، دوباره جستجو کن" |
+| Callback for expired/unknown state key | "منقضی شده، دوباره جستجو کن" + prompt to re-search |
+| Series quality with zero parsed episodes | Generic error, logged with HTML sample |
 
 ## 5. Security
 
@@ -172,8 +206,11 @@ solving.
   and deterministic.
 - **ZarfilmClient**: httpx `MockTransport` — search, details, session-expiry →
   re-login retry, transport-error retry, NotFound.
-- **Formatting**: snapshot-style tests for message text and keyboard layout,
-  including style/icon fallback when custom emoji IDs are unset.
+- **Formatting**: snapshot-style tests for card text and every keyboard state
+  (root, qualities, file URLs, seasons, cancel), including style/icon
+  fallback when custom emoji IDs are unset.
+- **Drill-down state**: CallbackState TTL expiry, key collisions, cancel
+  revert.
 - **Handlers**: aiogram's dispatcher test utilities for allowlist, debounce,
   and error middleware.
 - Manual acceptance: live run against zarfilm before each milestone.
@@ -193,7 +230,7 @@ solving.
 2. `ZarfilmClient` login + session persistence (+ live smoke test).
 3. Parsers for search + movie page (+ fixtures).
 4. Cache + formatting.
-5. Handlers: allowlist middleware, search, details, errors.
+5. Handlers: allowlist middleware, search, card, drill-down navigation, errors.
 6. Admin `/login` fallback.
 7. Polish: debounce, logging, README, Dockerfile for later hosting.
 
@@ -202,6 +239,8 @@ solving.
 - Exact login endpoint/field names and download-box markup need a
   logged-in capture (owner's credentials) during implementation milestone 2 —
   the parser design accommodates the download box being behind login.
+- Series episode-list rendering needs one sample series page with a Persian
+  dub to confirm how zarfilm labels season/dub links (milestone 3 fixture).
 - Custom emoji IDs for button icons are supplied by the owner at
   implementation time and go into the config mapping (Section 3); the
   remaining UI text templates in `AGENTS.md` are still proposals until the

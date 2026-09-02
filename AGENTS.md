@@ -45,9 +45,14 @@ src/
   📄 {plot truncated to ~300 chars}…
   ```
 
-- Inline button layout: one row of quality buttons (480p / 720p / 1080p, labels in Persian), plus a "صفحه در زرفیلم" URL button.
+- Interaction flow (drill-down; every step edits the same message's keyboard in place):
+  - Movie with a Persian dub on zarfilm: card shows [ دانلود با زبان اصلی (PRIMARY) ] [ دانلود با دوبله فارسی (SUCCESS) ] → tapping one edits the keyboard to quality buttons [ 1080p ] [ 720p ] [ 480p ] (all PRIMARY, size hint in label when known) → tapping a quality edits again to file URL button(s) labeled «⬇ {size} — {host}» plus [ انصراف (DANGER) ].
+  - Movie without a dub: quality buttons appear directly on the card.
+  - TV series: card shows season buttons [ فصل اول ] [ فصل دوم ] … → season → quality buttons (PRIMARY) → tapping a quality sends a compact text message with per-episode direct links (S01E01, …) and the card keyboard reverts to root.
+  - انصراف (DANGER) always returns the keyboard to the card's root state; no multi-level back.
+  - Card root also carries a "صفحه در زرفیلم" URL button.
+- Callback data: short in-memory keys (e.g. 6-hex) mapping to selection state — never raw slugs (Telegram's 64-byte callback_data limit).
 - Custom emoji: inline buttons use premium custom emojis via `icon_custom_emoji_id` (owner has Telegram Premium, so bot-sent messages qualify). Emoji IDs are supplied by the owner and kept in a config mapping (role → ID); when an ID is unset or missing, buttons fall back to plain-text emoji so the bot never breaks.
-- Button colors via `ButtonStyle`: 480p → PRIMARY, 720p → LINK, 1080p → SUCCESS (best quality highlighted), URL button → LINK, destructive/disabled or missing-link states → DANGER.
 - Rich metadata message example:
 
   ```
