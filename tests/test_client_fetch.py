@@ -14,7 +14,7 @@ PUBLIC_SEARCH = (FIXTURES / "search_interstellar.html").read_text(encoding="utf-
 PUBLIC_MOVIE = (FIXTURES / "movie_interstellar_public.html").read_text(encoding="utf-8")
 
 LOGGED_OUT_MARK = 'class="btnLoginHeader"'
-COOKIE = "wordpress_logged_in_abc=user%7C1; Path=/"
+FRESH_COOKIE = "user%7C1"
 
 AUTHED_SEARCH = PUBLIC_SEARCH.replace(LOGGED_OUT_MARK, "logged-in-nav")
 AUTHED_MOVIE = PUBLIC_MOVIE.replace(LOGGED_OUT_MARK, "logged-in-nav")
@@ -23,8 +23,8 @@ AUTHED_MOVIE = PUBLIC_MOVIE.replace(LOGGED_OUT_MARK, "logged-in-nav")
 def _app(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     cookie_ok = "wordpress_logged_in_abc" in request.headers.get("Cookie", "")
-    if path == "/sign-in/" and request.method == "POST":
-        return httpx.Response(302, headers={"Set-Cookie": COOKIE, "Location": "/"})
+    if path == "/sign-in/":
+        raise AssertionError("credential login must never be attempted")
     if path == "/" and request.method == "GET":
         if cookie_ok:
             return httpx.Response(200, text=AUTHED_SEARCH)
@@ -38,39 +38,45 @@ def _app(request: httpx.Request) -> httpx.Response:
     return httpx.Response(404)
 
 
-def _client(tmp_path) -> ZarfilmClient:
-    cfg = Config(
-        _env_file=None,
-        bot_token="1:abc",
-        zarfilm_username="u",
-        zarfilm_password="p",
-        session_path=tmp_path / "s.json",
+def _config(tmp_path: Path) -> Config:
+    return Config(_env_file=None, bot_token="1:abc", session_path=tmp_path / "s.json")
+
+
+def _client(tmp_path: Path) -> ZarfilmClient:
+    return ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(_app))
+
+
+def _seed_session(tmp_path: Path, value: str = FRESH_COOKIE) -> None:
+    (tmp_path / "s.json").write_text(
+        json.dumps({"wordpress_logged_in_abc": value}),
+        encoding="utf-8",
     )
-    return ZarfilmClient(cfg, transport=httpx.MockTransport(_app))
 
 
-async def test_search_returns_summaries(tmp_path) -> None:
+async def test_search_returns_summaries(tmp_path: Path) -> None:
     client = _client(tmp_path)
     results = await client.search("interstellar")
     assert any(r.slug == "interstellar-2014" for r in results)
     await client.close()
 
 
-async def test_movie_404_raises_not_found(tmp_path) -> None:
+async def test_movie_404_raises_not_found(tmp_path: Path) -> None:
+    _seed_session(tmp_path)
     client = _client(tmp_path)
     with pytest.raises(NotFoundError):
         await client.movie("missing-2000")
     await client.close()
 
 
-async def test_movie_logs_in_when_logged_out(tmp_path) -> None:
+async def test_movie_uses_restored_cookie_session(tmp_path: Path) -> None:
+    _seed_session(tmp_path)
     client = _client(tmp_path)
     details = await client.movie("interstellar-2014")
     assert details.summary.slug == "interstellar-2014"
     await client.close()
 
 
-async def test_search_transport_retry(tmp_path) -> None:
+async def test_search_transport_retry(tmp_path: Path) -> None:
     state = {"failed_once": False}
 
     def flaky(request: httpx.Request) -> httpx.Response:
@@ -79,14 +85,7 @@ async def test_search_transport_retry(tmp_path) -> None:
             raise httpx.ConnectError("boom", request=request)
         return _app(request)
 
-    cfg = Config(
-        _env_file=None,
-        bot_token="1:abc",
-        zarfilm_username="u",
-        zarfilm_password="p",
-        session_path=tmp_path / "s.json",
-    )
-    client = ZarfilmClient(cfg, transport=httpx.MockTransport(flaky))
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(flaky))
     results = await client.search("interstellar")
     assert isinstance(results, list)
     await client.close()
@@ -95,52 +94,44 @@ async def test_search_transport_retry(tmp_path) -> None:
 LOGGED_OUT_BODY = f"<html><div {LOGGED_OUT_MARK}></div></html>"
 
 
-def _expiry_app(logins_ok: bool) -> Callable[[httpx.Request], httpx.Response]:
+def _expiry_app(session_path: Path) -> Callable[[httpx.Request], httpx.Response]:
+    """First movie GET sees an expired session; before returning it rewrites
+    session.json (the /login hook), so the mid-flight restore picks up the
+    fresh cookie and the retry GET is value-checked against it."""
     movie_gets = {"count": 0}
 
     def app(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path == "/sign-in/" and request.method == "POST":
-            if logins_ok:
-                return httpx.Response(302, headers={"Set-Cookie": COOKIE, "Location": "/"})
-            return httpx.Response(200, text="<html>login page</html>")
-        if path == "/" and request.method == "GET":
-            return httpx.Response(200, text=AUTHED_SEARCH)
-        if path == "/interstellar-2014/" and request.method == "GET":
+        if request.url.path == "/interstellar-2014/" and request.method == "GET":
             movie_gets["count"] += 1
             if movie_gets["count"] == 1:
+                session_path.write_text(
+                    json.dumps({"wordpress_logged_in_abc": FRESH_COOKIE}),
+                    encoding="utf-8",
+                )
                 return httpx.Response(200, text=LOGGED_OUT_BODY)
-            return httpx.Response(200, text=AUTHED_MOVIE)
-        return httpx.Response(404)
+            fresh = FRESH_COOKIE in request.headers.get("Cookie", "")
+            return httpx.Response(200, text=AUTHED_MOVIE if fresh else LOGGED_OUT_BODY)
+        return _app(request)
 
     return app
 
 
-def _expired_client(tmp_path, app: Callable[[httpx.Request], httpx.Response]) -> ZarfilmClient:
-    cfg = Config(
-        _env_file=None,
-        bot_token="1:abc",
-        zarfilm_username="u",
-        zarfilm_password="p",
-        session_path=tmp_path / "s.json",
-    )
-    return ZarfilmClient(cfg, transport=httpx.MockTransport(app))
-
-
-async def test_movie_relogins_when_session_expires(tmp_path) -> None:
-    client = _expired_client(tmp_path, _expiry_app(logins_ok=True))
-    await client.login()
-    client._client.cookies.clear()
-    client._logged_in = True
-    details = await client.movie("interstellar-2014")
-    assert details.summary.slug == "interstellar-2014"
-    assert client._logged_in is True
+async def test_movie_expiry_without_session_raises_autherror(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    client.mark_session_ready()
+    with pytest.raises(AuthError, match="/login"):
+        await client.movie("interstellar-2014")
+    assert client._logged_in is False
     await client.close()
 
 
-async def test_movie_autherror_when_relogin_persists(tmp_path) -> None:
-    client = _expired_client(tmp_path, _expiry_app(logins_ok=False))
-    client._logged_in = True
-    with pytest.raises(AuthError):
-        await client.movie("interstellar-2014")
+async def test_movie_expiry_with_refreshed_cookie_retries_and_parses(tmp_path: Path) -> None:
+    client = ZarfilmClient(
+        _config(tmp_path),
+        transport=httpx.MockTransport(_expiry_app(tmp_path / "s.json")),
+    )
+    client.mark_session_ready()
+    details = await client.movie("interstellar-2014")
+    assert details.summary.slug == "interstellar-2014"
+    assert client._logged_in is True
     await client.close()

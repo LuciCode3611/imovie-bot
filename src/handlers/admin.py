@@ -38,6 +38,7 @@ async def receive_cookie(message: Message, state: FSMContext, cfg: Config, zarfi
     for name, value in cookies.items():
         zarfilm._client.cookies.set(name, value)
     cfg.session_path.write_text(json.dumps(dict(zarfilm._client.cookies)), encoding="utf-8")
+    zarfilm.mark_session_ready()
     await state.clear()
     logging.info("session cookie refreshed via /login")
     await message.answer("نشست به‌روزرسانی شد.")

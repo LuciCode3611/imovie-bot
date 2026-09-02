@@ -66,6 +66,10 @@ def _message(text: str, user_id: int = 42) -> Message:
 class _StubZarfilm:
     def __init__(self) -> None:
         self._client = httpx.Client()
+        self.ready = False
+
+    def mark_session_ready(self) -> None:
+        self.ready = True
 
 
 @pytest.fixture
@@ -74,7 +78,7 @@ def deps() -> dict[str, object]:
         "cache": AsyncMock(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
-        "cfg": Config(_env_file=None, bot_token="1:abc", zarfilm_username="u", zarfilm_password="p"),
+        "cfg": Config(_env_file=None, bot_token="1:abc"),
     }
 
 
@@ -179,8 +183,10 @@ async def test_receive_cookie_updates_session_and_deletes_message(
 
     message = _message("wordpress_logged_in_abc=user%7C1; theme=dark", user_id=42)
     fsm = AsyncMock()
-    await admin.receive_cookie(message, fsm, cfg, _StubZarfilm())  # type: ignore[arg-type]
+    stub = _StubZarfilm()
+    await admin.receive_cookie(message, fsm, cfg, stub)  # type: ignore[arg-type]
     message.delete.assert_awaited_once()
     assert "wordpress_logged_in_abc" in cfg.session_path.read_text(encoding="utf-8")
+    assert stub.ready is True
     message.answer.assert_awaited_once()
     fsm.clear.assert_awaited_once()

@@ -8,18 +8,10 @@ from src.exceptions import AuthError
 from src.models.config import Config
 from src.services.zarfilm import ZarfilmClient
 
-LOGIN_FORM = {"log": "u", "pwd": "p"}
-
 
 def _app(request: httpx.Request) -> httpx.Response:
-    if request.url.path == "/sign-in/" and request.method == "POST":
-        form = dict(pair.split("=", 1) for pair in request.content.decode().split("&"))
-        if form.get("log") == "u" and form.get("pwd") == "p":
-            return httpx.Response(
-                302,
-                headers={"Set-Cookie": "wordpress_logged_in_abc=user%7C1; Path=/", "Location": "/"},
-            )
-        return httpx.Response(200, text="<html>login page</html>")
+    if request.url.path == "/sign-in/":
+        raise AssertionError("credential login must never be attempted")
     if request.url.path == "/" and request.method == "GET":
         if "wordpress_logged_in_abc" in request.headers.get("Cookie", ""):
             return httpx.Response(200, text="<html>member home</html>")
@@ -31,42 +23,50 @@ def _config(tmp_path: Path) -> Config:
     return Config(
         _env_file=None,
         bot_token="1:abc",
-        zarfilm_username="u",
-        zarfilm_password="p",
         session_path=tmp_path / "session.json",
     )
 
 
-async def test_login_success_persists_cookies(tmp_path: Path) -> None:
+async def test_ensure_session_without_session_file_raises_autherror(tmp_path: Path) -> None:
     client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(_app))
-    await client.login()
-    saved = json.loads((tmp_path / "session.json").read_text(encoding="utf-8"))
-    assert any(key.startswith("wordpress_logged_in") for key in saved)
+    with pytest.raises(AuthError, match="/login"):
+        await client.ensure_session()
     await client.close()
 
 
-async def test_login_bad_credentials_raises(tmp_path: Path) -> None:
-    cfg = Config(_env_file=None, bot_token="1:abc", zarfilm_username="wrong", zarfilm_password="x", session_path=tmp_path / "s.json")
+async def test_ensure_session_with_invalid_session_file_raises_autherror(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.session_path.write_text(json.dumps({"theme": "dark"}), encoding="utf-8")
     client = ZarfilmClient(cfg, transport=httpx.MockTransport(_app))
-    with pytest.raises(AuthError):
-        await client.login()
+    with pytest.raises(AuthError, match="/login"):
+        await client.ensure_session()
     await client.close()
 
 
 async def test_restored_session_skips_login(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
-    first = ZarfilmClient(cfg, transport=httpx.MockTransport(_app))
-    await first.login()
-    await first.close()
+    cfg.session_path.write_text(
+        json.dumps({"wordpress_logged_in_abc": "user%7C1", "theme": "dark"}),
+        encoding="utf-8",
+    )
 
-    calls = {"posts": 0}
+    calls = {"requests": 0}
 
     def counting_app(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/sign-in/":
-            calls["posts"] += 1
+        calls["requests"] += 1
         return _app(request)
 
-    second = ZarfilmClient(cfg, transport=httpx.MockTransport(counting_app))
-    await second.ensure_session()
-    assert calls["posts"] == 0
-    await second.close()
+    client = ZarfilmClient(cfg, transport=httpx.MockTransport(counting_app))
+    await client.ensure_session()
+    assert calls["requests"] == 0
+    assert client._logged_in is True
+    assert "wordpress_logged_in_abc" in client._client.cookies
+    await client.close()
+
+
+async def test_mark_session_ready_skips_restore(tmp_path: Path) -> None:
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(_app))
+    client.mark_session_ready()
+    await client.ensure_session()
+    assert client._logged_in is True
+    await client.close()

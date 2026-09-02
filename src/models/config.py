@@ -16,8 +16,6 @@ class Config(BaseSettings):
     )
 
     bot_token: str
-    zarfilm_username: str
-    zarfilm_password: str
     allowed_user_ids: Annotated[list[int] | None, NoDecode] = None
     session_path: Path = Path("session.json")
     search_ttl: int = 3600

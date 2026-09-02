@@ -15,7 +15,6 @@ A private Telegram bot for finding movies and series: search by Persian or Engli
    | Variable | Purpose |
    | --- | --- |
    | `BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
-   | `ZARFILM_USERNAME` / `ZARFILM_PASSWORD` | Source-site account used to fetch download links |
    | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot; the first one is the owner |
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels, e.g. `{"dub": "5368385512908012910"}` |
 
@@ -40,4 +39,10 @@ python -m pytest
 
 ## Owner: session recovery
 
-If the site session expires, log in to the site in a normal browser, copy the full `Cookie` header from a request to the site, then send `/login` to the bot from the owner account (the first ID in `ALLOWED_USER_IDS`) and paste the header. The bot stores the session cookies in `session.json` and resumes working.
+The bot has no source-site credentials — its login form is captcha-protected, so sessions come only from a browser cookie.
+
+1. Log in to the site once in a normal browser.
+2. In DevTools (Network tab) copy the `Cookie` request header of any request to the site — or just the value of the `wordpress_logged_in_...` row under Application → Cookies.
+3. Send `/login` to the bot from the owner account (the first ID in `ALLOWED_USER_IDS`) and paste the cookie header.
+
+The bot stores the session cookies in `session.json` and resumes working immediately. When the session expires, repeat the same steps — `/login` is the only way to (re)supply a session. Captchas are never solved and credentials are never stored.

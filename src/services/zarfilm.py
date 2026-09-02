@@ -11,7 +11,6 @@ from src.models.config import Config
 from src.services.parsers import parse_movie, parse_search
 
 BASE_URL = "https://zarfilm.com"
-LOGIN_PATH = "/sign-in/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -34,25 +33,7 @@ class ZarfilmClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def login(self) -> None:
-        async with self._lock:
-            await self._login_locked()
-
-    async def _login_locked(self) -> None:
-        self._client.cookies.clear()
-        response = await self._client.post(
-            LOGIN_PATH,
-            data={
-                "log": self._cfg.zarfilm_username,
-                "pwd": self._cfg.zarfilm_password,
-                "wp-submit": "ورود",
-                "redirect_to": BASE_URL,
-            },
-        )
-        response.raise_for_status()
-        if not any(name.startswith("wordpress_logged_in") for name in self._client.cookies.keys()):
-            raise AuthError("login rejected: no session cookie; check credentials or form fields")
-        Path(self._cfg.session_path).write_text(json.dumps(dict(self._client.cookies)), encoding="utf-8")
+    def mark_session_ready(self) -> None:
         self._logged_in = True
 
     async def ensure_session(self) -> None:
@@ -61,7 +42,7 @@ class ZarfilmClient:
         if self._restore_session():
             self._logged_in = True
             return
-        await self._login_locked()
+        raise AuthError("no valid session — owner must send /login with a browser cookie")
 
     def _restore_session(self) -> bool:
         path = Path(self._cfg.session_path)
@@ -96,11 +77,10 @@ class ZarfilmClient:
         response = await self._get(path)
         if self.LOGGED_OUT_MARK in response.text:
             self._logged_in = False
-            async with self._lock:
-                await self._login_locked()
+            await self.ensure_session()
             response = await self._get(path)
             if self.LOGGED_OUT_MARK in response.text:
-                raise AuthError("session expired and re-login did not restore access")
+                raise AuthError("session expired — owner must send /login with a fresh browser cookie")
         return response
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:

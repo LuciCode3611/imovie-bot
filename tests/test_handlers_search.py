@@ -28,7 +28,7 @@ def deps() -> dict[str, object]:
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
-        "cfg": Config(_env_file=None, bot_token="1:abc", zarfilm_username="u", zarfilm_password="p"),
+        "cfg": Config(_env_file=None, bot_token="1:abc"),
     }
 
 

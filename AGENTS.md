@@ -28,7 +28,7 @@ src/
 ## Domain Rules
 
 - Direct links only: the bot sends zarfilm download URLs; it never re-uploads files to Telegram.
-- One zarfilm account (owner's VIP). The client logs in with credentials from `.env`, persists cookies locally, and re-logins automatically on session expiry. Fallback: `/login` admin command that accepts a pasted cookie and deletes the message immediately after reading it.
+- Cookie-only sessions: the zarfilm login form is captcha-protected, so credentials are never used or stored and captchas are never solved. The only session supply is the `/login` admin command (owner pastes a browser cookie; the message is deleted immediately after reading it). The client restores the cookie from `session.json` and, on expiry, asks the owner to re-run `/login`.
 - Secrets (`.env`, session files) are never committed, never logged, never echoed into chats.
 - Scraping etiquette: in-memory TTL cache for searches and pages; space out requests; one search in flight per user.
 - Allowlist-only: Telegram user IDs not in `ALLOWED_USER_IDS` are ignored with a terse rejection.

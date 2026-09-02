@@ -17,8 +17,6 @@ def _config() -> Config:
     return Config(
         _env_file=None,
         bot_token="1:abc",
-        zarfilm_username="u",
-        zarfilm_password="p",
         allowed_user_ids=[42],
     )
 

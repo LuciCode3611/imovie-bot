@@ -5,7 +5,7 @@ from src.models.config import Config
 
 
 def _base_env() -> dict[str, str]:
-    return {"bot_token": "1:abc", "zarfilm_username": "u", "zarfilm_password": "p"}
+    return {"bot_token": "1:abc"}
 
 
 def test_minimal_config() -> None:
@@ -28,7 +28,7 @@ def test_emoji_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_missing_token_rejected() -> None:
     with pytest.raises(ValidationError):
-        Config(_env_file=None, zarfilm_username="u", zarfilm_password="p")
+        Config(_env_file=None)
 
 
 def test_empty_env_ids_fall_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
