@@ -1,3 +1,4 @@
+from src.models.config import Config
 from src.models.movie import (
     DownloadLink,
     EpisodeLink,
@@ -9,6 +10,7 @@ from src.models.movie import (
 )
 
 __all__ = [
+    "Config",
     "DownloadLink",
     "EpisodeLink",
     "MediaKind",
