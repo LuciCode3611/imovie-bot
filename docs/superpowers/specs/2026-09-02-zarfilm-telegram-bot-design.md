@@ -91,16 +91,19 @@ series episode list.
 
 - Movie with a Persian dub: root keyboard `[ دانلود با زبان اصلی (PRIMARY) ]`
   `[ دانلود با دوبله فارسی (SUCCESS) ]` → quality row
-  `[ 1080p ] [ 720p ] [ 480p ]` (all `PRIMARY`, size hint in label when
-  known) → file row: URL button(s) `⬇ {size} — {host}` + `[ انصراف (DANGER) ]`.
+  `[ 1080p - 2.1GB ] [ 720p - 1.4GB ] [ 480p - 800MB ]` (all `PRIMARY`,
+  size included when known) → file row: URL button(s) `⬇ {size} — {host}` +
+  `[ انصراف (DANGER) ]`.
 - Movie without a dub: root keyboard is the quality row directly.
 - Series: root keyboard is season buttons `[ فصل اول ] [ فصل دوم ] …` →
   quality row (all `PRIMARY`) → tapping a quality sends a compact text
   message listing per-episode direct links (S01E01, …), and the card keyboard
   reverts to its root state.
 - `انصراف` always returns the keyboard to the card root; shallow state
-  machine, no multi-level back. The card root also carries a
-  "صفحه در زرفیلم" URL button.
+  machine, no multi-level back.
+- Source privacy (owner requirement): no "صفحه در زرفیلم" URL button and no
+  site name in any user-facing text — messages and error texts are
+  source-neutral; the source is only visible in the download URLs themselves.
 - Callback data uses short in-memory keys (6-hex → selection state, TTL 1 h)
   to stay under Telegram's 64-byte `callback_data` limit and reuse parsed
   movie data without re-scraping on every tap.
@@ -184,7 +187,7 @@ solving.
 |---|---|
 | Session expired | Auto re-login once, retry request; on failure `AuthError` |
 | Login blocked (captcha/HTML change) | Notify owner in chat; `/login` cookie fallback |
-| Search timeout / transport error | One retry, then "زرفیلم در دسترس نیست، بعداً تلاش کن" |
+| Search timeout / transport error | One retry, then "منبع موقتاً در دسترس نیست؛ بعداً تلاش کن" |
 | No results | "چیزی پیدا نشد" + suggest trying another spelling |
 | Parse failure (site redesign) | `ParseError`, logged with the HTML sample; user sees generic error |
 | Non-allowlisted user | Terse rejection; nothing executes |
@@ -197,6 +200,9 @@ solving.
   cookie file gitignored; never logged, never echoed into chats.
 - `/login` cookie message deleted immediately after parsing.
 - Hard allowlist middleware; unknown users get a rejection, no processing.
+- Source privacy: the scraped site is never named in user-facing messages,
+  errors, or button labels — friends see a neutral "movie bot"; the source
+  appears only inside the download URLs themselves.
 - Repo contains no credentials; log files excluded from git.
 
 ## 6. Testing
