@@ -1,0 +1,14 @@
+# Secrets & local state
+.env
+session.json
+*.log
+logs/
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Scraped probe pages (will be replaced by curated test fixtures)
+_probe_*.html
