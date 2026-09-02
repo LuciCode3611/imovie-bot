@@ -116,6 +116,12 @@ def _expiry_app(session_path: Path) -> Callable[[httpx.Request], httpx.Response]
     return app
 
 
+def _stale_app(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/interstellar-2014/" and request.method == "GET":
+        return httpx.Response(200, text=LOGGED_OUT_BODY)
+    return _app(request)
+
+
 async def test_movie_expiry_without_session_raises_autherror(tmp_path: Path) -> None:
     client = _client(tmp_path)
     client.mark_session_ready()
@@ -134,4 +140,12 @@ async def test_movie_expiry_with_refreshed_cookie_retries_and_parses(tmp_path: P
     details = await client.movie("interstellar-2014")
     assert details.summary.slug == "interstellar-2014"
     assert client._logged_in is True
+    await client.close()
+
+
+async def test_movie_autherror_when_stale_session_persists(tmp_path: Path) -> None:
+    _seed_session(tmp_path, value="stale")
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(_stale_app))
+    with pytest.raises(AuthError, match="session expired"):
+        await client.movie("interstellar-2014")
     await client.close()

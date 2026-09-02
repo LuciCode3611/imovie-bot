@@ -36,6 +36,9 @@ async def main() -> None:
     client.mark_session_ready()
     for filename, path in TARGETS.items():
         response = await client._client.get(path)
+        if response.status_code != 200:
+            print(f"skipped {filename}: HTTP {response.status_code}")
+            continue
         (FIXTURES / filename).write_bytes(response.content)
         print(f"saved {filename}: HTTP {response.status_code}, {len(response.content)} bytes")
     await client.close()
