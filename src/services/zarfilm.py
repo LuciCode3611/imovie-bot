@@ -3,9 +3,12 @@ import json
 from pathlib import Path
 
 import httpx
+from selectolax.parser import HTMLParser
 
-from src.exceptions import AuthError
+from src.exceptions import AuthError, NotFoundError
+from src.models import MovieDetails, MovieSummary
 from src.models.config import Config
+from src.services.parsers import parse_movie, parse_search
 
 BASE_URL = "https://zarfilm.com"
 LOGIN_PATH = "/sign-in/"
@@ -73,3 +76,37 @@ class ZarfilmClient:
         for name, value in cookies.items():
             self._client.cookies.set(name, value)
         return True
+
+    LOGGED_OUT_MARK = "btnLoginHeader"
+
+    async def search(self, query: str) -> list[MovieSummary]:
+        response = await self._get("/", params={"s": query})
+        response.raise_for_status()
+        return parse_search(HTMLParser(response.text))
+
+    async def movie(self, slug: str) -> MovieDetails:
+        response = await self._get_logged_in(f"/{slug}/")
+        if response.status_code == 404:
+            raise NotFoundError(slug)
+        response.raise_for_status()
+        return parse_movie(HTMLParser(response.text), slug)
+
+    async def _get_logged_in(self, path: str) -> httpx.Response:
+        await self.ensure_session()
+        response = await self._get(path)
+        if self.LOGGED_OUT_MARK in response.text:
+            self._logged_in = False
+            async with self._lock:
+                await self._login_locked()
+            response = await self._get(path)
+            if self.LOGGED_OUT_MARK in response.text:
+                raise AuthError("session expired and re-login did not restore access")
+        return response
+
+    async def _get(self, path: str, **kwargs) -> httpx.Response:
+        async with self._lock:
+            try:
+                return await self._client.get(path, **kwargs)
+            except httpx.TransportError:
+                await asyncio.sleep(1.0)
+                return await self._client.get(path, **kwargs)
