@@ -9,6 +9,19 @@ from src.models import MediaKind, MovieDetails, MovieSummary
 TITLE_PREFIXES = ("دانلود رایگان سریال ", "دانلود رایگان فیلم ", "دانلود سریال ", "دانلود انیمیشن ", "دانلود فیلم ")
 
 
+def parse_cookie_header(raw: str) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    for part in raw.split(";"):
+        if "=" in part:
+            name, value = part.strip().split("=", 1)
+            cookies[name] = value
+    return cookies
+
+
+def filter_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
+    return {name: value for name, value in cookies.items() if name.startswith("wordpress_logged_in")}
+
+
 def parse_search(html: HTMLParser) -> list[MovieSummary]:
     results: list[MovieSummary] = []
     for card in html.css('.posts_hoder_archive .item_body_widget[data-type="post"]'):
