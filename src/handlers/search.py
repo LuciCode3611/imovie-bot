@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.types import Message
 
 from src.models import MovieSummary
@@ -14,7 +15,7 @@ NO_RESULTS_TEXT = "چیزی پیدا نشد؛ با املای دیگری امت�
 MAX_RESULTS = 5
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def handle_search(
     message: Message,
     zarfilm: ZarfilmClient,

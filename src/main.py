@@ -27,10 +27,10 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     dp.callback_query.middleware(AllowlistMiddleware(allowed))
 
     deps = {"cfg": config, "zarfilm": zarfilm, "cache": cache, "card_state": card_state}
+    dp.include_router(admin.router)
     dp.include_router(common.router)
     dp.include_router(search.router)
     dp.include_router(card.router)
-    dp.include_router(admin.router)
     dp.workflow_data.update(deps)
     return dp, zarfilm
 
