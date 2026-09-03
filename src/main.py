@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -34,6 +35,16 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     return dp, zarfilm
 
 
+def create_bot(config: Config) -> Bot:
+    if config.proxy_url is None:
+        return Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    return Bot(
+        config.bot_token,
+        session=AiohttpSession(proxy=config.proxy_url),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+
 async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -41,12 +52,13 @@ async def main() -> None:
     )
     config = Config()
     dp, zarfilm = build_dispatcher(config)
-    bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = create_bot(config)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     finally:
         await zarfilm.close()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

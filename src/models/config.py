@@ -23,6 +23,7 @@ class Config(BaseSettings):
     page_ttl: int = 21600
     state_ttl: int = 3600
     emoji: Annotated[dict[str, str] | None, NoDecode] = None
+    proxy_url: str | None = None
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

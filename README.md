@@ -20,6 +20,7 @@ A private Telegram bot for finding movies and series: search by Persian or Engli
 
    > **Note:** `OWNER_ID` alone does NOT grant bot access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in `ALLOWED_USER_IDS` or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`.
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels, e.g. `{"dub": "5368385512908012910"}` |
+   | `PROXY_URL` | Optional; if Telegram is blocked on the host, set this to your local proxy endpoint, e.g. `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809` |
 
 3. Run:
 
