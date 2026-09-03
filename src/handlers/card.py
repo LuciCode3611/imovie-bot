@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
 from src.handlers.common import edit_markup_safely, edit_text_safely
@@ -43,18 +44,22 @@ async def open_card(
         details = await zarfilm.movie(slug)
         await cache.set(page_key, details, cfg.page_ttl)
     entry.details = details
-    if not (details.originals or details.dubs or details.seasons):
-        await edit_text_safely(
-            callback.message,
-            f"{card_text(details)}\n\n⚠️ {NO_LINKS_TEXT}",
-            parse_mode="HTML",
-        )
-        await callback.answer()
-        return
+    has_links = bool(details.originals or details.dubs or details.seasons)
+    text = card_text(details) if has_links else f"{card_text(details)}\n\n⚠️ {NO_LINKS_TEXT}"
+    poster = details.summary.poster_url
+    if poster:
+        markup = root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None
+        try:
+            # a new poster message keeps the search list available for other results
+            await callback.message.answer_photo(poster, caption=text, reply_markup=markup)
+            await callback.answer()
+            return
+        except TelegramBadRequest:
+            pass  # poster URL unusable — fall back to editing in place
     await edit_text_safely(
         callback.message,
-        card_text(details),
-        reply_markup=root_keyboard(details, key, emoji_map=cfg.emoji),
+        text,
+        reply_markup=root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None,
         parse_mode="HTML",
     )
     await callback.answer()
@@ -126,7 +131,9 @@ async def choose_quality(callback: CallbackQuery, card_state: CallbackState, cfg
             await callback.answer(INVALID_PATH_TEXT, show_alert=True)
             return
         pack = qualities[idx]
-        for part in episode_list_messages(pack):
+        season_label = entry.details.seasons[season_index].label
+        header = f"📂 {season_label} · {pack.quality} — {len(pack.episodes)} قسمت"
+        for part in episode_list_messages(pack, header=header):
             await callback.message.answer(part, parse_mode="HTML")
         await edit_markup_safely(
             callback.message,

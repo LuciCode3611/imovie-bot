@@ -4,7 +4,7 @@ from typing import Any
 from aiogram.enums.button_style import ButtonStyle
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.models import DownloadLink, EpisodeLink, MovieDetails, QualityPack
+from src.models import DownloadLink, EpisodeLink, MediaKind, MovieDetails, QualityPack
 from src.repos.state import CardEntry
 
 PLOT_LIMIT = 300
@@ -19,13 +19,28 @@ FALLBACK_ICONS: dict[str, str] = {
     "result": "🎬",
 }
 
+KIND_BADGES: dict[MediaKind, str] = {
+    MediaKind.MOVIE: "🎬",
+    MediaKind.SERIES: "📺",
+}
+
+KIND_WORDS: dict[MediaKind, str] = {
+    MediaKind.MOVIE: "فیلم",
+    MediaKind.SERIES: "سریال",
+}
+
+
+def kind_badge(kind: MediaKind) -> str:
+    return KIND_BADGES.get(kind, FALLBACK_ICONS["result"])
+
 
 def card_text(details: MovieDetails) -> str:
     summary = details.summary
     title = escape(summary.title_en)
     if summary.title_fa:
         title += f" — {escape(summary.title_fa)}"
-    head = f"🎬 {title} ({summary.year})" if summary.year else f"🎬 {title}"
+    year = f" ({summary.year})" if summary.year else ""
+    head = f"{kind_badge(summary.kind)} {KIND_WORDS.get(summary.kind, '')} | {title}{year}"
     meta_parts: list[str] = []
     if details.imdb:
         meta_parts.append(f"⭐ {escape(details.imdb)}")
@@ -58,8 +73,12 @@ def welcome_keyboard() -> InlineKeyboardMarkup:
 
 def _result_button(key: str, entry: CardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
     s = entry.summary
-    text = s.title_en + (f" ({s.year})" if s.year else "")
-    return _icon_button(text, "result", emoji_map, callback_data=f"m:{key}", style=ButtonStyle.PRIMARY)
+    label = s.title_en + (f" ({s.year})" if s.year else "")
+    text = f"{kind_badge(s.kind)} {label}"
+    icon = (emoji_map or {}).get("result")
+    if icon:
+        return InlineKeyboardButton(text=text, icon_custom_emoji_id=icon, callback_data=f"m:{key}", style=ButtonStyle.PRIMARY)
+    return InlineKeyboardButton(text=text, callback_data=f"m:{key}", style=ButtonStyle.PRIMARY)
 
 
 def root_keyboard(
@@ -132,7 +151,8 @@ def _quality_label(link: DownloadLink) -> str:
 
 
 def _file_button(link: DownloadLink) -> InlineKeyboardButton:
-    text = "⬇ " + (link.size or "دانلود")
+    parts = [link.quality] + ([link.size] if link.size else [])
+    text = "⬇ " + " · ".join(parts)
     if link.host:
         text += f" — {link.host}"
     return InlineKeyboardButton(text=text, url=link.url)
@@ -164,7 +184,7 @@ def episode_list_text(pack: QualityPack) -> str:
     return "\n".join(episode_line(episode) for episode in pack.episodes)
 
 
-def episode_list_messages(pack: QualityPack, limit: int = EPISODE_CHUNK_LIMIT) -> list[str]:
+def episode_list_messages(pack: QualityPack, limit: int = EPISODE_CHUNK_LIMIT, header: str = "") -> list[str]:
     messages: list[str] = []
     current: list[str] = []
     length = 0
@@ -177,6 +197,8 @@ def episode_list_messages(pack: QualityPack, limit: int = EPISODE_CHUNK_LIMIT) -
         length += len(line) + 1
     if current:
         messages.append("\n".join(current))
+    if header and messages:
+        messages[0] = f"{header}\n\n{messages[0]}"
     return messages
 
 

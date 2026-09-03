@@ -47,11 +47,13 @@ src/
 
 - Interaction flow (drill-down; every step edits the same message's keyboard in place):
   - Search is gated: free text never triggers a site request. The user taps [ جستجو ] → bot enters listening state («نام فیلم یا سریال رو بنویس…») → the next text message is the search query → mode auto-resets after results/no-results. Free text while not listening gets a hint to tap جستجو; nothing hits the site.
+  - Search feedback: on a cache miss the bot posts «🔍 در حال جستجو…» and edits it into the results (cache hits answer directly). The results message header echoes the query («نتایج برای «query»:») and notes truncation («نوشع ۵ از ۱۲») when more than 5 results arrive.
   - Welcome: /start sends a formatted welcome card (bot purpose + short راهنما) with the [ جستجو ] button attached.
   - Quality buttons stack vertically, one per row, label format «{quality} - {size}» (e.g. «1080p - 2.1GB»); file URL buttons follow the same vertical layout.
-  - Movie with a Persian dub on zarfilm: card shows [ دانلود با زبان اصلی (PRIMARY) ] [ دانلود با دوبله فارسی (SUCCESS) ] → tapping one edits the keyboard to vertically stacked quality buttons [ 1080p - 2.1GB ] [ 720p - 1.4GB ] [ 480p - 800MB ] (all PRIMARY, size included when known) → tapping a quality edits again to file URL button(s) labeled «⬇ {size} — {host}» plus [ انصراف (DANGER) ].
+  - Movie with a Persian dub on zarfilm: card shows [ دانلود با زبان اصلی (PRIMARY) ] [ دانلود با دوبله فارسی (SUCCESS) ] → tapping one edits the keyboard to vertically stacked quality buttons [ 1080p - 2.1GB ] [ 720p - 1.4GB ] [ 480p - 800MB ] (all PRIMARY, size included when known) → tapping a quality edits again to file URL button(s) labeled «⬇ {quality} · {size} — {host}» plus [ انصراف (DANGER) ].
   - Movie without a dub: quality buttons appear directly on the card.
-  - TV series: card shows season buttons [ فصل اول ] [ فصل دوم ] … → season → quality buttons (PRIMARY) → tapping a quality sends a compact text message with per-episode direct links (S01E01, …) and the card keyboard reverts to root.
+  - TV series: card shows season buttons [ فصل اول ] [ فصل دوم ] … → season → quality buttons (PRIMARY) → tapping a quality sends text message(s) with per-episode direct links (S01E01, …), headed by «📂 {season} · {quality} — {n} قسمت» and chunked under Telegram's 4096-char limit; the card keyboard reverts to root.
+  - Posters: when the movie page exposes a poster URL, the card is sent as a NEW photo message (caption = card text, keyboard attached) so the search-results list stays usable for other results; if Telegram rejects the photo URL, fall back to editing the results message in place.
   - انصراف (DANGER) always returns the keyboard to the card's root state; no multi-level back.
 - Source privacy: never mention the site name to users — no "صفحه در زرفیلم" URL button, no zarfilm branding in messages or error texts. User-facing text is source-neutral; the source is visible only in the actual download URLs.
 - Callback data: short in-memory keys (e.g. 6-hex) mapping to selection state — never raw slugs (Telegram's 64-byte callback_data limit).

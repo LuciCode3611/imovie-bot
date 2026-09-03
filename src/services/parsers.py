@@ -18,6 +18,7 @@ from src.models import (
 
 TITLE_PREFIXES = ("دانلود رایگان سریال ", "دانلود رایگان فیلم ", "دانلود سریال ", "دانلود انیمیشن ", "دانلود فیلم ")
 
+SITE_ORIGIN = "https://zarfilm.com"
 DL_HREF_PREFIX = "https://dl"
 SEASON_HEADING_TAGS = ("h2", "h3", "h4")
 SEASON_HEADING_WORD = "فصل"
@@ -97,14 +98,16 @@ def parse_search(html: HTMLParser) -> list[MovieSummary]:
             continue
         slug = link.attributes["href"].rstrip("/").rsplit("/", 1)[-1]
         poster_node = card.css_first("a.bgbackitem img")
+        title = _text(card, ".item-foot-title h3.movie-title")
         results.append(
             MovieSummary(
                 slug=slug,
-                title_en=_text(card, ".item-foot-title h3.movie-title") or slug,
+                title_en=title or slug,
                 title_fa=None,
                 year=_int_or_none(_text(card, ".score .year")),
-                poster_url=poster_node.attributes.get("src") if poster_node else None,
+                poster_url=_absolute(poster_node.attributes.get("src")) if poster_node else None,
                 genres=[node.text(strip=True) for node in card.css(".genres_links h3 span") if node.text(strip=True)],
+                kind=_detect_kind(title or ""),
             )
         )
     return results
@@ -116,7 +119,7 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
     if not webpage.get("name"):
         raise ParseError("movie page without JSON-LD WebPage name")
     title_en, title_fa = _split_title(webpage["name"])
-    poster = _node(graph, "ImageObject").get("url")
+    poster = _absolute(_node(graph, "ImageObject").get("url"))
     summary = MovieSummary(
         slug=slug,
         title_en=title_en,
@@ -262,6 +265,14 @@ def _year_from_slug(slug: str) -> int | None:
 def _text(scope: HTMLParser, selector: str) -> str | None:
     node = scope.css_first(selector)
     return node.text(strip=True) if node else None
+
+
+def _absolute(url: str | None) -> str | None:
+    if url is None:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return SITE_ORIGIN + (url if url.startswith("/") else f"/{url}")
 
 
 def _int_or_none(value: str | None) -> int | None:

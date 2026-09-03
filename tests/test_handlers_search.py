@@ -22,7 +22,7 @@ def _message(text: str, user_id: int = 42) -> Message:
     message = AsyncMock(spec=Message)
     message.text = text
     message.from_user = User(id=user_id, is_bot=False, first_name="t")
-    message.answer = AsyncMock()
+    message.answer = AsyncMock(return_value=AsyncMock())
     return message
 
 
@@ -47,11 +47,22 @@ async def test_search_replies_with_result_buttons(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=_results())
     message = _message("interstellar")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
-    message.answer.assert_awaited_once()
-    kwargs = message.answer.await_args.kwargs
-    kb = kwargs["reply_markup"]
+    status = message.answer.return_value
+    assert message.answer.await_args.args[0] == search.SEARCHING_TEXT
+    status.edit_text.assert_awaited_once()
+    kb = status.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].callback_data.startswith("m:")
     assert kb.inline_keyboard[0][0].text.startswith("🎬")
+
+
+async def test_cached_search_skips_loading_message(deps: dict[str, Any]) -> None:
+    await deps["cache"].set("search:interstellar", _results(), ttl=60)
+    deps["zarfilm"].search = AsyncMock()
+    message = _message("interstellar")
+    await search.handle_search(message, **deps)  # type: ignore[arg-type]
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.args[0].startswith("نتایج برای")
+    message.answer.return_value.edit_text.assert_not_awaited()
 
 
 async def test_search_threads_custom_emoji_map(tmp_path) -> None:
@@ -64,7 +75,7 @@ async def test_search_threads_custom_emoji_map(tmp_path) -> None:
     }
     message = _message("interstellar")
     await search.handle_search(message, **deps_local)  # type: ignore[arg-type]
-    kb = message.answer.await_args.kwargs["reply_markup"]
+    kb = message.answer.return_value.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].icon_custom_emoji_id == "555"
 
 
@@ -72,8 +83,8 @@ async def test_search_no_results_message(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=[])
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
-    text = message.answer.await_args.args[0]
-    assert "پیدا نشد" in text
+    status = message.answer.return_value
+    status.edit_text.assert_awaited_once_with(search.NO_RESULTS_TEXT)
 
 
 async def test_search_uses_cache_before_site(deps: dict[str, Any]) -> None:

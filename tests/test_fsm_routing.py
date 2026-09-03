@@ -98,6 +98,7 @@ async def test_cookie_paste_reaches_admin_fsm_not_search(tmp_path: Path) -> None
     stub = _StubZarfilm(tmp_path / "session.json")
     dp.workflow_data["zarfilm"] = stub
     session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
     bot = Bot(token="12345:TEST", session=session)
 
     await dp.feed_update(bot, _update("/login", 1, bot))
@@ -151,6 +152,7 @@ async def test_free_text_never_hits_site_until_search_button_tapped() -> None:
     stub = _StubZarfilm()
     dp.workflow_data["zarfilm"] = stub
     session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
     bot = Bot(token="12345:TEST", session=session)
 
     await dp.feed_update(bot, _update("interstellar", 1, bot))
@@ -191,6 +193,7 @@ async def test_login_not_blocked_while_search_in_flight() -> None:
     stub = _SlowZarfilm()
     dp.workflow_data["zarfilm"] = stub
     session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
     bot = Bot(token="12345:TEST", session=session)
 
     await dp.feed_update(bot, _callback_update(1, bot, "srch:go"))

@@ -306,3 +306,54 @@ async def test_malformed_callback_data_alerts_instead_of_crashing(deps: dict[str
         cb = _cb(data, AsyncMock())
         await handler(cb, **deps)  # type: ignore[arg-type]
         assert "نامعتبر" in cb.answer.await_args.args[0]
+
+
+async def test_open_card_with_poster_sends_photo_and_keeps_search_list(deps: dict[str, object]) -> None:
+    details = _movie_details()
+    details.summary.poster_url = "https://img.example.com/poster.jpg"
+    entry = CardEntry(summary=details.summary)
+    key = deps["card_state"].create(entry)
+    deps["cache"].get = AsyncMock(return_value=None)
+    deps["zarfilm"].movie = AsyncMock(return_value=details)
+    message = AsyncMock()
+    message.answer_photo = AsyncMock()
+    message.edit_text = AsyncMock()
+    await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
+    message.answer_photo.assert_awaited_once()
+    args = message.answer_photo.await_args.args
+    kwargs = message.answer_photo.await_args.kwargs
+    assert args[0] == "https://img.example.com/poster.jpg"
+    assert kwargs["caption"].startswith("🎬")
+    assert "فیلم" in kwargs["caption"]
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"l:{key}:orig"
+    message.edit_text.assert_not_awaited()
+
+
+async def test_open_card_poster_failure_falls_back_to_text_card(deps: dict[str, object]) -> None:
+    from aiogram.methods import SendPhoto
+
+    details = _movie_details()
+    details.summary.poster_url = "https://img.example.com/broken.jpg"
+    entry = CardEntry(summary=details.summary)
+    key = deps["card_state"].create(entry)
+    deps["cache"].get = AsyncMock(return_value=None)
+    deps["zarfilm"].movie = AsyncMock(return_value=details)
+    message = AsyncMock()
+    message.answer_photo = AsyncMock(
+        side_effect=TelegramBadRequest(method=SendPhoto(chat_id=1, photo="x"), message="Bad Request: wrong file identifier")
+    )
+    message.edit_text = AsyncMock()
+    await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
+    message.edit_text.assert_awaited_once()
+    assert message.edit_text.await_args.kwargs["reply_markup"] is not None
+
+
+async def test_series_episode_list_has_season_header(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0")
+    key = deps["card_state"].create(entry)
+    message = AsyncMock()
+    message.edit_reply_markup = AsyncMock()
+    await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
+    text = message.answer.await_args.args[0]
+    assert text.startswith("📂")
+    assert "فصل اول" in text and "قسمت" in text
