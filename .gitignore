@@ -1,6 +1,7 @@
 # Secrets & local state
 .env
 session.json
+cookie.txt
 *.log
 logs/
 
