@@ -45,5 +45,6 @@ The bot has no source-site credentials — its login form is captcha-protected, 
 1. Log in to the site once in a normal browser.
 2. In DevTools (Network tab) copy the `Cookie` request header of any request to the site — or just the value of the `wordpress_logged_in_...` row under Application → Cookies.
 3. Send `/login` to the bot from the owner account (the `OWNER_ID`, or the first ID in `ALLOWED_USER_IDS`) and paste the cookie header.
+   JSON, Netscape, or plain header exports from any browser cookie extension all work.
 
 The bot stores the session cookies in `session.json` and resumes working immediately. When the session expires, the owner receives an alert DM (rate-limited to one per 10 minutes) — repeat the same steps, since `/login` is the only way to (re)supply a session. Captchas are never solved and credentials are never stored.

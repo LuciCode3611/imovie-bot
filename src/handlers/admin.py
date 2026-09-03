@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from src.models.config import Config, resolve_owner
-from src.services.parsers import filter_session_cookies, parse_cookie_header
+from src.services.parsers import filter_session_cookies, parse_cookies
 from src.services.zarfilm import ZarfilmClient
 
 router = Router(name="admin")
@@ -30,7 +30,7 @@ async def start_login(message: Message, state: FSMContext, cfg: Config) -> None:
 async def receive_cookie(message: Message, state: FSMContext, cfg: Config, zarfilm: ZarfilmClient) -> None:
     raw = message.text or ""
     await message.delete()
-    cookies = parse_cookie_header(raw)
+    cookies = parse_cookies(raw)
     session_cookies = filter_session_cookies(cookies)
     if not session_cookies:
         await message.answer("کوکی نشست توش نبود؛ دوباره تلاش کن.")

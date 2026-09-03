@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import httpx  # noqa: E402
 
 from src.models.config import Config  # noqa: E402
-from src.services.parsers import parse_cookie_header  # noqa: E402
+from src.services.parsers import parse_cookies  # noqa: E402
 from src.services.zarfilm import ZarfilmClient  # noqa: E402
 
 FIXTURES = Path("tests/fixtures")
@@ -22,11 +22,11 @@ async def main() -> None:
     raw = os.environ.get("ZARFILM_COOKIE", "")
     if not raw:
         sys.exit(
-            "Set ZARFILM_COOKIE first: copy the Cookie request header of a logged-in "
-            "request to zarfilm.com from browser DevTools (Network tab), or just the "
-            "wordpress_logged_in_... row's value from Application > Cookies."
+            "Set ZARFILM_COOKIE first: paste a JSON, Netscape, or header cookie export "
+            "(any browser cookie extension works), or the Cookie request header of a "
+            "logged-in request to zarfilm.com from DevTools."
         )
-    cookies = parse_cookie_header(raw)
+    cookies = parse_cookies(raw)
     if not any(name.startswith("wordpress_logged_in") for name in cookies):
         sys.exit("ZARFILM_COOKIE has no wordpress_logged_in_* cookie — copy the header from a logged-in request.")
     FIXTURES.mkdir(parents=True, exist_ok=True)

@@ -22,6 +22,54 @@ def filter_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     return {name: value for name, value in cookies.items() if name.startswith("wordpress_logged_in")}
 
 
+def parse_cookies(raw: str) -> dict[str, str]:
+    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header; domain fields are discarded and all cookies are kept because the jar is per-bot and zarfilm ignores irrelevant entries."""
+    text = raw.lstrip()
+    if text.startswith(("[", "{")):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(data, (list, dict)):
+                return _cookies_from_json(data)
+    if "\t" in raw:
+        netscape = _cookies_from_netscape(raw)
+        if netscape:
+            return netscape
+    return parse_cookie_header(raw)
+
+
+def _cookies_from_json(data: list | dict) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if isinstance(name, str) and item.get("value") is not None:
+                cookies[name] = str(item["value"])
+    else:
+        for name, value in data.items():
+            if isinstance(name, str) and isinstance(value, str):
+                cookies[name] = value
+    return cookies
+
+
+def _cookies_from_netscape(raw: str) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#HttpOnly_"):
+            stripped = stripped[len("#HttpOnly_") :]
+        elif stripped.startswith("#"):
+            continue
+        fields = stripped.split("\t", 6)
+        if len(fields) >= 7:
+            cookies[fields[5]] = fields[6]
+    return cookies
+
+
 def parse_search(html: HTMLParser) -> list[MovieSummary]:
     results: list[MovieSummary] = []
     for card in html.css('.posts_hoder_archive .item_body_widget[data-type="post"]'):
