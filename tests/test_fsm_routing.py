@@ -3,7 +3,6 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
@@ -19,10 +18,18 @@ COOKIE_PASTE = "wordpress_logged_in_x=abc; theme=dark"
 
 
 class _StubZarfilm:
-    def __init__(self) -> None:
-        self._client = httpx.Client()
+    def __init__(self, session_path: Path | None = None) -> None:
+        self._session_path = session_path
+        self.cookies: dict[str, str] = {}
         self.ready = False
         self.search_calls: list[str] = []
+
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        self.cookies.update(cookies)
+
+    def persist_session(self) -> None:
+        if self._session_path is not None:
+            self._session_path.write_text(json.dumps(self.cookies), encoding="utf-8")
 
     def mark_session_ready(self) -> None:
         self.ready = True
@@ -88,9 +95,10 @@ async def test_cookie_paste_reaches_admin_fsm_not_search(tmp_path: Path) -> None
         session_path=tmp_path / "session.json",
     )
     dp, _ = build_dispatcher(cfg)
-    stub = _StubZarfilm()
+    stub = _StubZarfilm(tmp_path / "session.json")
     dp.workflow_data["zarfilm"] = stub
     session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
     bot = Bot(token="12345:TEST", session=session)
 
     await dp.feed_update(bot, _update("/login", 1, bot))
@@ -102,3 +110,98 @@ async def test_cookie_paste_reaches_admin_fsm_not_search(tmp_path: Path) -> None
     texts = _answered_texts(session)
     assert search.NO_RESULTS_TEXT not in texts
     assert texts and texts[-1].endswith("به‌روزرسانی شد.")
+
+
+def _callback_update(update_id: int, bot: Bot, data: str, user_id: int = OWNER_ID) -> Update:
+    message = Message.model_validate(
+        {
+            "message_id": update_id,
+            "date": 0,
+            "chat": {"id": user_id, "type": "private"},
+            "from": {"id": user_id, "is_bot": False, "first_name": "t"},
+            "text": "old",
+        }
+    )
+    return Update.model_validate(
+        {
+            "update_id": update_id,
+            "callback_query": {
+                "id": str(update_id),
+                "from": {"id": user_id, "is_bot": False, "first_name": "t"},
+                "chat_instance": "ci",
+                "data": data,
+                "message": message.model_dump(exclude_none=True),
+            },
+        },
+        context={"bot": bot},
+    )
+
+
+@pytest.mark.usefixtures("_detach_routers")
+async def test_free_text_never_hits_site_until_search_button_tapped() -> None:
+    from src.main import build_dispatcher
+
+    cfg = Config(
+        _env_file=None,
+        bot_token="1:abc",
+        owner_id=OWNER_ID,
+        allowed_user_ids=[OWNER_ID],
+        session_path=Path("/tmp/unused-session.json"),
+    )
+    dp, _ = build_dispatcher(cfg)
+    stub = _StubZarfilm()
+    dp.workflow_data["zarfilm"] = stub
+    session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
+    bot = Bot(token="12345:TEST", session=session)
+
+    await dp.feed_update(bot, _update("interstellar", 1, bot))
+    assert stub.search_calls == []
+    texts = _answered_texts(session)
+    assert texts and texts[-1] == search.HINT_TEXT
+
+    await dp.feed_update(bot, _callback_update(2, bot, "srch:go"))
+    await dp.feed_update(bot, _update("interstellar", 3, bot))
+    assert stub.search_calls == ["interstellar"]
+
+
+@pytest.mark.usefixtures("_detach_routers")
+async def test_login_not_blocked_while_search_in_flight() -> None:
+    import asyncio
+
+    from src.main import build_dispatcher
+
+    cfg = Config(
+        _env_file=None,
+        bot_token="1:abc",
+        owner_id=OWNER_ID,
+        allowed_user_ids=[OWNER_ID],
+        session_path=Path("/tmp/unused-session.json"),
+    )
+    dp, _ = build_dispatcher(cfg)
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowZarfilm(_StubZarfilm):
+        async def search(self, query: str) -> list[MovieSummary]:
+            self.search_calls.append(query)
+            started.set()
+            await release.wait()
+            return []
+
+    stub = _SlowZarfilm()
+    dp.workflow_data["zarfilm"] = stub
+    session = AsyncMock(spec=BaseSession)
+    session.return_value = AsyncMock()
+    bot = Bot(token="12345:TEST", session=session)
+
+    await dp.feed_update(bot, _callback_update(1, bot, "srch:go"))
+    searching = asyncio.create_task(dp.feed_update(bot, _update("interstellar", 2, bot)))
+    await started.wait()
+    await dp.feed_update(bot, _update("/login", 3, bot))
+    texts = _answered_texts(session)
+    assert any(text.startswith("مقدار کوکی") for text in texts)
+
+    release.set()
+    await searching

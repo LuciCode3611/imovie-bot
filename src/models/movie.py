@@ -45,7 +45,6 @@ class MovieSummary(BaseModel):
 class MovieDetails(BaseModel):
     summary: MovieSummary
     imdb: str | None = None
-    runtime: str | None = None
     plot: str | None = None
     originals: list[DownloadLink] = Field(default_factory=list)
     dubs: list[DownloadLink] = Field(default_factory=list)

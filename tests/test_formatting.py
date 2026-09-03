@@ -166,3 +166,31 @@ def test_keyboard_builders_apply_emoji_map_icons() -> None:
     assert kb.inline_keyboard[0][0].url == "https://dl.example.com/f.mkv" and kb.inline_keyboard[0][0].icon_custom_emoji_id is None
     kb = search_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], emoji_map={})
     assert kb.inline_keyboard[0][0].icon_custom_emoji_id is None and kb.inline_keyboard[0][0].text.startswith("🎬")
+
+
+def test_episode_list_messages_short_pack_is_single_message() -> None:
+    from src.services.formatting import episode_list_messages
+
+    pack = _details(series=True).seasons[0].qualities[0]
+    messages = episode_list_messages(pack)
+    assert len(messages) == 1
+    assert "S01E01" in messages[0]
+
+
+def test_episode_list_messages_chunks_long_packs() -> None:
+    from src.models import EpisodeLink
+    from src.services.formatting import episode_list_messages
+
+    pack = QualityPack(
+        quality="720p",
+        episodes=[
+            EpisodeLink(label=f"S01E{i:03d}", url=f"https://dl.example.com/episode-number-{i:03d}.mkv", size="1.4GB")
+            for i in range(250)
+        ],
+    )
+    messages = episode_list_messages(pack, limit=1000)
+    assert len(messages) > 1
+    assert all(len(message) <= 1000 for message in messages)
+    joined = "\n".join(messages)
+    assert "S01E000" in joined and "S01E249" in joined
+    assert joined.count("<a href=") == 250

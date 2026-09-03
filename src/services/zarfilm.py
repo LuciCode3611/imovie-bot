@@ -1,11 +1,13 @@
 import asyncio
+import contextlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 from selectolax.parser import HTMLParser
 
-from src.exceptions import AuthError, NotFoundError
+from src.exceptions import AuthError, NotFoundError, SessionExpiredError
 from src.models import MovieDetails, MovieSummary
 from src.models.config import Config
 from src.services.parsers import parse_movie, parse_search
@@ -36,6 +38,17 @@ class ZarfilmClient:
     def mark_session_ready(self) -> None:
         self._logged_in = True
 
+    def set_cookies(self, cookies: Mapping[str, str]) -> None:
+        for name, value in cookies.items():
+            self._client.cookies.set(name, value)
+
+    def persist_session(self) -> None:
+        jar = {name: value for name, value in self._client.cookies.items()}
+        path = Path(self._cfg.session_path)
+        path.write_text(json.dumps(jar), encoding="utf-8")
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+
     async def ensure_session(self) -> None:
         if self._logged_in:
             return
@@ -54,8 +67,7 @@ class ZarfilmClient:
             return False
         if not any(name.startswith("wordpress_logged_in") for name in cookies):
             return False
-        for name, value in cookies.items():
-            self._client.cookies.set(name, value)
+        self.set_cookies(cookies)
         return True
 
     LOGGED_OUT_MARK = "btnLoginHeader"
@@ -80,7 +92,7 @@ class ZarfilmClient:
             await self.ensure_session()
             response = await self._get(path)
             if self.LOGGED_OUT_MARK in response.text:
-                raise AuthError("session expired — owner must send /login with a fresh browser cookie")
+                raise SessionExpiredError("session expired — owner must send /login with a fresh browser cookie")
         return response
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:

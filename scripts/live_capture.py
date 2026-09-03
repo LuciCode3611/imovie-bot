@@ -5,7 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx  # noqa: E402
 
 from src.models.config import Config  # noqa: E402
 from src.services.parsers import parse_cookies  # noqa: E402
@@ -31,8 +30,7 @@ async def main() -> None:
         sys.exit("ZARFILM_COOKIE has no wordpress_logged_in_* cookie — copy the header from a logged-in request.")
     FIXTURES.mkdir(parents=True, exist_ok=True)
     client = ZarfilmClient(Config())
-    for name, value in cookies.items():
-        client._client.cookies.set(name, value)
+    client.set_cookies(cookies)
     client.mark_session_ready()
     for filename, path in TARGETS.items():
         response = await client._client.get(path)

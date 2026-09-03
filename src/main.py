@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.handlers import admin, card, common, search
 from src.handlers.middleware import AllowlistMiddleware, SearchLockMiddleware
-from src.models.config import Config
+from src.models.config import Config, resolve_owner
 from src.repos.cache import TTLCache
 from src.repos.state import CallbackState
 from src.services.zarfilm import ZarfilmClient
@@ -22,9 +22,13 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     card_state = CallbackState(ttl=config.state_ttl)
 
     allowed = set(config.allowed_user_ids or [])
+    if not allowed:
+        logging.warning("ALLOWED_USER_IDS is empty — the bot will reject every user, including the owner")
+    if resolve_owner(config) is None:
+        logging.warning("no owner configured — /login and session-expiry alerts are disabled")
     dp.message.middleware(AllowlistMiddleware(allowed))
-    dp.message.middleware(SearchLockMiddleware())
     dp.callback_query.middleware(AllowlistMiddleware(allowed))
+    search.router.message.middleware(SearchLockMiddleware())
 
     deps = {"cfg": config, "zarfilm": zarfilm, "cache": cache, "card_state": card_state}
     dp.include_router(admin.router)

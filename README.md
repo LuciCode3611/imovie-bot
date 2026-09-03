@@ -1,6 +1,6 @@
 # Movie Bot
 
-A private Telegram bot for finding movies and series: search by Persian or English title, then follow inline buttons (audio → quality → episodes) to get direct download links.
+A private Telegram bot for finding movies and series: tap **جستجو**, type a Persian or English title, then follow inline buttons (audio → quality → episodes) to get direct download links.
 
 ## Setup
 
@@ -17,10 +17,11 @@ A private Telegram bot for finding movies and series: search by Persian or Engli
    | `BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
    | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot; the first one is the owner |
    | `OWNER_ID` | Owner Telegram ID: receives session-expiry alerts and is the /login account (falls back to the first `ALLOWED_USER_IDS` entry) |
-
-   > **Note:** `OWNER_ID` alone does NOT grant bot access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in `ALLOWED_USER_IDS` or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`.
-   | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels, e.g. `{"dub": "5368385512908012910"}` |
+   | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels (roles: `original`, `dub`, `season`, `quality`, `result`). Roles without an ID — or an unset `EMOJI` — fall back to built-in unicode icons, so the bot never breaks either way |
+   | `SESSION_PATH` | Optional path for the stored login session (default `session.json` in the working directory); in Docker, point it at a mounted volume |
    | `PROXY_URL` | Optional; if Telegram is blocked on the host, set this to your local proxy endpoint, e.g. `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809` |
+
+   > **Note:** `OWNER_ID` alone does NOT grant bot access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in `ALLOWED_USER_IDS` or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`. If `ALLOWED_USER_IDS` is empty the bot rejects everyone and logs a warning at startup.
 
 3. Run:
 
@@ -28,12 +29,21 @@ A private Telegram bot for finding movies and series: search by Persian or Engli
    python -m src.main
    ```
 
+## Search flow
+
+Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters a listening state («نام فیلم یا سریال رو بنویس…»), and the next message becomes the search query. Text sent while not listening just gets a hint with the button attached. The listening mode resets automatically after results or no-results, and `/start` clears it.
+
 ## Docker
 
 ```bash
 docker build -t movie-bot .
-docker run --env-file .env movie-bot
+docker run --env-file .env \
+  -v movie-bot-data:/app/data \
+  -e SESSION_PATH=/app/data/session.json \
+  movie-bot
 ```
+
+The volume keeps the login session across container restarts; without it every redeploy needs a fresh `/login`. The container runs as a non-root user.
 
 ## Tests
 
@@ -50,4 +60,4 @@ The bot has no source-site credentials — its login form is captcha-protected, 
 3. Send `/login` to the bot from the owner account (the `OWNER_ID`, or the first ID in `ALLOWED_USER_IDS`) and paste the cookie header.
    JSON, Netscape, or plain header exports from any browser cookie extension all work.
 
-The bot stores the session cookies in `session.json` and resumes working immediately. When the session expires, the owner receives an alert DM (rate-limited to one per 10 minutes) — repeat the same steps, since `/login` is the only way to (re)supply a session. Captchas are never solved and credentials are never stored.
+The bot deletes the cookie message immediately (and warns you to delete it manually if deletion fails), stores the session in `SESSION_PATH` with owner-only file permissions, and resumes working immediately. When the session expires, the owner receives an alert DM (rate-limited to one per 10 minutes) — repeat the same steps, since `/login` is the only way to (re)supply a session. Captchas are never solved and credentials are never stored.
