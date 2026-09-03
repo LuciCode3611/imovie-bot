@@ -1,10 +1,10 @@
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-PRIVATE_ONLY_TEXT = "این ربات خصوصی است."
 BUSY_TEXT = "یه جستجو در حال اجراست؛ کمی صبر کن."
 
 
@@ -20,8 +20,7 @@ class AllowlistMiddleware(BaseMiddleware):
     ) -> Any:
         user = data.get("event_from_user")
         if user is None or user.id not in self._allowed:
-            if isinstance(event, Message):
-                await event.answer(PRIVATE_ONLY_TEXT)
+            logging.info("dropped update from unauthorized user id=%s", getattr(user, "id", None))
             return None
         return await handler(event, data)
 

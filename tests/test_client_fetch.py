@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from src.exceptions import AuthError, NotFoundError
+from src.exceptions import AuthError, NotFoundError, SessionExpiredError
 from src.models.config import Config
 from src.services.zarfilm import ZarfilmClient
 
@@ -146,6 +146,6 @@ async def test_movie_expiry_with_refreshed_cookie_retries_and_parses(tmp_path: P
 async def test_movie_autherror_when_stale_session_persists(tmp_path: Path) -> None:
     _seed_session(tmp_path, value="stale")
     client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(_stale_app))
-    with pytest.raises(AuthError, match="session expired"):
+    with pytest.raises(SessionExpiredError, match="session expired"):
         await client.movie("interstellar-2014")
     await client.close()

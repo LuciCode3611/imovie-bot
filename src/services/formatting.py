@@ -4,10 +4,12 @@ from typing import Any
 from aiogram.enums.button_style import ButtonStyle
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.models import DownloadLink, MovieDetails, QualityPack
+from src.models import DownloadLink, EpisodeLink, MovieDetails, QualityPack
 from src.repos.state import CardEntry
 
 PLOT_LIMIT = 300
+TELEGRAM_MESSAGE_LIMIT = 4096
+EPISODE_CHUNK_LIMIT = 3800
 
 FALLBACK_ICONS: dict[str, str] = {
     "original": "🔵",
@@ -29,8 +31,6 @@ def card_text(details: MovieDetails) -> str:
         meta_parts.append(f"⭐ {escape(details.imdb)}")
     if summary.genres:
         meta_parts.append("🎭 " + escape("، ".join(summary.genres[:3])))
-    if details.runtime:
-        meta_parts.append(f"⏱ {escape(details.runtime)}")
     lines = [head]
     if meta_parts:
         lines.append(" · ".join(meta_parts))
@@ -153,12 +153,31 @@ def _icon_button(
     return apply_icon(text, role, emoji_map, **button_kwargs)
 
 
+def episode_line(episode: EpisodeLink) -> str:
+    line = f'<a href="{escape(episode.url)}">{escape(episode.label)}</a>'
+    if episode.size:
+        line += f" — {escape(episode.size)}"
+    return line
+
+
 def episode_list_text(pack: QualityPack) -> str:
-    lines = [
-        f'<a href="{escape(episode.url)}">{escape(episode.label)}</a>' + (f" — {escape(episode.size)}" if episode.size else "")
-        for episode in pack.episodes
-    ]
-    return "\n".join(lines)
+    return "\n".join(episode_line(episode) for episode in pack.episodes)
+
+
+def episode_list_messages(pack: QualityPack, limit: int = EPISODE_CHUNK_LIMIT) -> list[str]:
+    messages: list[str] = []
+    current: list[str] = []
+    length = 0
+    for episode in pack.episodes:
+        line = episode_line(episode)
+        if current and length + len(line) + 1 > limit:
+            messages.append("\n".join(current))
+            current, length = [], 0
+        current.append(line)
+        length += len(line) + 1
+    if current:
+        messages.append("\n".join(current))
+    return messages
 
 
 def apply_icon(text: str, role: str, emoji_map: dict[str, str], **button_kwargs: Any) -> InlineKeyboardButton:

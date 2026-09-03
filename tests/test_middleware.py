@@ -1,7 +1,6 @@
 import asyncio
 from unittest.mock import AsyncMock
 
-import pytest
 from aiogram.types import Message, User
 
 from src.handlers.middleware import AllowlistMiddleware, SearchLockMiddleware
@@ -28,8 +27,18 @@ async def test_allowlisted_user_passes() -> None:
 
 async def test_stranger_blocked() -> None:
     handler = AsyncMock()
+    message = _message(7)
     mw = AllowlistMiddleware(allowed={42})
-    result = await mw(handler, _message(7), _data(7))
+    result = await mw(handler, message, _data(7))
+    assert result is None
+    handler.assert_not_awaited()
+    message.answer.assert_not_awaited()
+
+
+async def test_missing_user_blocked_silently() -> None:
+    handler = AsyncMock()
+    mw = AllowlistMiddleware(allowed={42})
+    result = await mw(handler, _message(42), {})
     assert result is None
     handler.assert_not_awaited()
 

@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.dispatcher.event.handler import HandlerObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, Update, User
 

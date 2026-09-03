@@ -1,7 +1,7 @@
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import httpx
 from aiogram.types import Message, User
 
 from src.handlers import admin
@@ -55,9 +55,15 @@ def test_filter_session_cookies_untouched() -> None:
 
 
 class _StubZarfilm:
-    def __init__(self) -> None:
-        self._client = httpx.Client()
+    def __init__(self, session_path: Path) -> None:
+        self._session_path = session_path
         self.ready = False
+
+    def set_cookies(self, cookies: dict[str, str]) -> None:
+        self.cookies = cookies
+
+    def persist_session(self) -> None:
+        self._session_path.write_text(json.dumps(self.cookies), encoding="utf-8")
 
     def mark_session_ready(self) -> None:
         self.ready = True
@@ -71,7 +77,7 @@ async def test_receive_cookie_accepts_json_array(tmp_path: Path) -> None:
     message.from_user = User(id=42, is_bot=False, first_name="t")
     message.delete = AsyncMock()
     message.answer = AsyncMock()
-    stub = _StubZarfilm()
+    stub = _StubZarfilm(cfg.session_path)
     await admin.receive_cookie(message, AsyncMock(), cfg, stub)  # type: ignore[arg-type]
     message.delete.assert_awaited_once()
     assert "wordpress_logged_in_abc" in cfg.session_path.read_text(encoding="utf-8")

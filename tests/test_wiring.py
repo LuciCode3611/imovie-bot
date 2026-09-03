@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,25 @@ from src.repos.cache import TTLCache
 from src.repos.state import CallbackState
 
 
+@pytest.fixture
+def _detach_routers() -> Iterator[None]:
+    """aiogram routers allow a single parent dispatcher per process; detach after use
+    so build_dispatcher stays callable in other tests."""
+    yield
+    from src.handlers import admin as admin_module
+    from src.handlers import card as card_module
+    from src.handlers import common as common_module
+    from src.handlers import search as search_module
+
+    for router in (
+        common_module.router,
+        search_module.router,
+        card_module.router,
+        admin_module.router,
+    ):
+        router._parent_router = None  # noqa: SLF001 - no public detach API in aiogram
+
+
 def _config() -> Config:
     return Config(
         _env_file=None,
@@ -21,6 +41,7 @@ def _config() -> Config:
     )
 
 
+@pytest.mark.usefixtures("_detach_routers")
 def test_build_dispatcher_injects_deps_and_routers() -> None:
     from src.main import build_dispatcher
 
@@ -51,7 +72,7 @@ async def test_expired_cancel_key_alerts_with_real_state() -> None:
     cb.data = "x:dead00"
     cb.message = AsyncMock()
     cb.answer = AsyncMock()
-    await card.cancel(cb, card_state=CallbackState(ttl=60))  # type: ignore[arg-type]
+    await card.cancel(cb, card_state=CallbackState(ttl=60), cfg=_config())  # type: ignore[arg-type]
     cb.answer.assert_awaited_once_with(card.EXPIRED_TEXT, show_alert=True)
 
 
@@ -68,3 +89,39 @@ async def test_expired_open_card_key_alerts_with_real_state() -> None:
         cfg=_config(),
     )
     cb.answer.assert_awaited_once_with(card.EXPIRED_TEXT, show_alert=True)
+
+
+async def test_start_clears_state_and_attaches_search_button() -> None:
+    message = AsyncMock(spec=Message)
+    message.answer = AsyncMock()
+    state = AsyncMock()
+    await common.start(message, state)  # type: ignore[arg-type]
+    message.answer.assert_awaited_once()
+    kwargs = message.answer.await_args.kwargs
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "srch:go"
+    state.clear.assert_awaited_once()
+
+
+async def test_on_error_notfound_answers_specific_text() -> None:
+    from src.exceptions import NotFoundError
+
+    message = AsyncMock(spec=Message)
+    message.answer = AsyncMock()
+    event = SimpleNamespace(update=SimpleNamespace(message=message, callback_query=None))
+    handled = await common.on_error(event, NotFoundError("gone"), bot=None, cfg=_config())  # type: ignore[arg-type]
+    assert handled is True
+    message.answer.assert_awaited_once_with(common.NOT_FOUND_TEXT)
+
+
+@pytest.mark.usefixtures("_detach_routers")
+async def test_build_dispatcher_warns_on_empty_allowlist_and_missing_owner(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from src.main import build_dispatcher
+
+    cfg = Config(_env_file=None, bot_token="1:abc", allowed_user_ids=[])
+    with caplog.at_level(logging.WARNING):
+        _, zarfilm = build_dispatcher(cfg)
+        await zarfilm.close()
+    assert any("ALLOWED_USER_IDS is empty" in record.message for record in caplog.records)
+    assert any("no owner configured" in record.message for record in caplog.records)
