@@ -46,7 +46,10 @@ src/
   ```
 
 - Interaction flow (drill-down; every step edits the same message's keyboard in place):
-  - Movie with a Persian dub on zarfilm: card shows [ دانلود با زبان اصلی (PRIMARY) ] [ دانلود با دوبله فارسی (SUCCESS) ] → tapping one edits the keyboard to quality buttons [ 1080p - 2.1GB ] [ 720p - 1.4GB ] [ 480p - 800MB ] (all PRIMARY, size included when known) → tapping a quality edits again to file URL button(s) labeled «⬇ {size} — {host}» plus [ انصراف (DANGER) ].
+  - Search is gated: free text never triggers a site request. The user taps [ جستجو ] → bot enters listening state («نام فیلم یا سریال رو بنویس…») → the next text message is the search query → mode auto-resets after results/no-results. Free text while not listening gets a hint to tap جستجو; nothing hits the site.
+  - Welcome: /start sends a formatted welcome card (bot purpose + short راهنما) with the [ جستجو ] button attached.
+  - Quality buttons stack vertically, one per row, label format «{quality} - {size}» (e.g. «1080p - 2.1GB»); file URL buttons follow the same vertical layout.
+  - Movie with a Persian dub on zarfilm: card shows [ دانلود با زبان اصلی (PRIMARY) ] [ دانلود با دوبله فارسی (SUCCESS) ] → tapping one edits the keyboard to vertically stacked quality buttons [ 1080p - 2.1GB ] [ 720p - 1.4GB ] [ 480p - 800MB ] (all PRIMARY, size included when known) → tapping a quality edits again to file URL button(s) labeled «⬇ {size} — {host}» plus [ انصراف (DANGER) ].
   - Movie without a dub: quality buttons appear directly on the card.
   - TV series: card shows season buttons [ فصل اول ] [ فصل دوم ] … → season → quality buttons (PRIMARY) → tapping a quality sends a compact text message with per-episode direct links (S01E01, …) and the card keyboard reverts to root.
   - انصراف (DANGER) always returns the keyboard to the card's root state; no multi-level back.
