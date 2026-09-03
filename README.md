@@ -17,6 +17,8 @@ A private Telegram bot for finding movies and series: search by Persian or Engli
    | `BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
    | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot; the first one is the owner |
    | `OWNER_ID` | Owner Telegram ID: receives session-expiry alerts and is the /login account (falls back to the first `ALLOWED_USER_IDS` entry) |
+
+   > **Note:** `OWNER_ID` alone does NOT grant bot access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in `ALLOWED_USER_IDS` or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`.
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels, e.g. `{"dub": "5368385512908012910"}` |
 
 3. Run:
