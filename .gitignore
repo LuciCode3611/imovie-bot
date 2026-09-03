@@ -13,3 +13,6 @@ __pycache__/
 
 # Scraped probe pages (will be replaced by curated test fixtures)
 _probe_*.html
+
+# Local files (not part of the project)
+result.json
