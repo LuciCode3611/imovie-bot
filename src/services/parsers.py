@@ -91,8 +91,9 @@ def _cookies_from_netscape(raw: str) -> dict[str, str]:
 
 
 def parse_search(html: HTMLParser) -> list[MovieSummary]:
+    # card data-type varies between post kinds (movies/series) — match any card
     results: list[MovieSummary] = []
-    for card in html.css('.posts_hoder_archive .item_body_widget[data-type="post"]'):
+    for card in html.css(".posts_hoder_archive .item_body_widget"):
         link = card.css_first("a.bgbackitem")
         if link is None or not link.attributes.get("href"):
             continue

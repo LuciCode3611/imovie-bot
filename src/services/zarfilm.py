@@ -10,6 +10,7 @@ from selectolax.parser import HTMLParser
 from src.exceptions import AuthError, NotFoundError, SessionExpiredError
 from src.models import MovieDetails, MovieSummary
 from src.models.config import Config
+from src.services.matching import fallback_query, filter_matches
 from src.services.parsers import parse_movie, parse_search
 
 BASE_URL = "https://zarfilm.com"
@@ -73,6 +74,16 @@ class ZarfilmClient:
     LOGGED_OUT_MARK = "btnLoginHeader"
 
     async def search(self, query: str) -> list[MovieSummary]:
+        results = await self._search_once(query)
+        if results:
+            return results
+        fallback = fallback_query(query)
+        if fallback is None:
+            return results
+        candidates = await self._search_once(fallback)
+        return filter_matches(query, candidates) or candidates
+
+    async def _search_once(self, query: str) -> list[MovieSummary]:
         response = await self._get("/", params={"s": query})
         response.raise_for_status()
         return parse_search(HTMLParser(response.text))

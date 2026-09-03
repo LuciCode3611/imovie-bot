@@ -14,8 +14,8 @@ from src.services.formatting import (
     episode_list_text,
     file_keyboard,
     quality_keyboard,
+    results_keyboard,
     root_keyboard,
-    search_keyboard,
     season_quality_keyboard,
     welcome_keyboard,
 )
@@ -116,11 +116,29 @@ def test_episode_list_text() -> None:
     assert '<a href="https://dl.example.com/e01.mkv">S01E01</a>' in text and "300MB" in text
 
 
-def test_search_keyboard() -> None:
+def test_results_keyboard_single_page_has_no_nav() -> None:
     entry = CardEntry(summary=_details().summary)
-    kb = search_keyboard([("aaaaaa", entry)])
+    kb = results_keyboard([("aaaaaa", entry)], 0, 1, "skey001")
     btn = kb.inline_keyboard[0][0]
     assert btn.callback_data == "m:aaaaaa" and btn.style == "primary"
+    assert len(kb.inline_keyboard) == 1
+
+
+def test_results_keyboard_nav_row_covers_all_pages() -> None:
+    entry = CardEntry(summary=_details().summary)
+    pairs = [("aaaaaa", entry)] * 5
+    first = results_keyboard(pairs, 0, 3, "skey001").inline_keyboard[-1]
+    assert [b.text for b in first] == ["1/3", "▶"]
+    assert first[0].callback_data == "pg:skey001:i"
+    assert first[1].callback_data == "pg:skey001:1"
+    middle = results_keyboard(pairs, 1, 3, "skey001").inline_keyboard[-1]
+    assert [b.text for b in middle] == ["◀", "2/3", "▶"]
+    assert middle[0].callback_data == "pg:skey001:0"
+    last = results_keyboard(pairs, 2, 3, "skey001").inline_keyboard[-1]
+    assert [b.text for b in last] == ["◀", "3/3"]
+    for row in (first, middle, last):
+        for btn in row:
+            assert len(btn.callback_data.encode()) <= 64
 
 
 def test_welcome_keyboard_single_search_button() -> None:
@@ -160,11 +178,11 @@ def test_keyboard_builders_apply_emoji_map_icons() -> None:
     assert kb.inline_keyboard[0][1].text == "دانلود با دوبله فارسی" and kb.inline_keyboard[0][1].icon_custom_emoji_id == "222"
     kb = root_keyboard(_details(series=True), "abc123", emoji_map=emoji_map)
     assert kb.inline_keyboard[0][0].text == "فصل اول" and kb.inline_keyboard[0][0].icon_custom_emoji_id == "333"
-    kb = search_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], emoji_map=emoji_map)
+    kb = results_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], 0, 1, "skey001", emoji_map=emoji_map)
     assert kb.inline_keyboard[0][0].icon_custom_emoji_id == "555"
     kb = file_keyboard(_details().originals, "abc123", emoji_map=emoji_map)
     assert kb.inline_keyboard[0][0].url == "https://dl.example.com/f.mkv" and kb.inline_keyboard[0][0].icon_custom_emoji_id is None
-    kb = search_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], emoji_map={})
+    kb = results_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], 0, 1, "skey001", emoji_map={})
     assert kb.inline_keyboard[0][0].icon_custom_emoji_id is None and kb.inline_keyboard[0][0].text.startswith("🎬")
 
 

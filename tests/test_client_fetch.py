@@ -149,3 +149,57 @@ async def test_movie_autherror_when_stale_session_persists(tmp_path: Path) -> No
     with pytest.raises(SessionExpiredError, match="session expired"):
         await client.movie("interstellar-2014")
     await client.close()
+
+
+def _card_html(title: str, slug: str) -> str:
+    return (
+        '<html><body><div class="posts_hoder_archive">'
+        f'<div class="item_body_widget" data-type="post">'
+        f'<a class="bgbackitem" href="https://zarfilm.com/{slug}/"><img src="/wp.jpg"></a>'
+        f'<div class="item-foot-title"><h3 class="movie-title">{title}</h3></div>'
+        '</div></div></body></html>'
+    )
+
+
+NO_RESULTS_HTML = '<html><body><div class="posts_hoder_archive"></div></body></html>'
+
+
+def _fallback_app(full: str, stem: str, full_body: str, stem_body: str) -> Callable[[httpx.Request], httpx.Response]:
+    def app(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/" and request.method == "GET":
+            if request.url.params.get("s") == full:
+                return httpx.Response(200, text=full_body)
+            if request.url.params.get("s") == stem:
+                return httpx.Response(200, text=stem_body)
+        return httpx.Response(404)
+
+    return app
+
+
+async def test_search_fallback_finds_phrase_titles_for_compound_queries(tmp_path: Path) -> None:
+    app = _fallback_app("spiderman", "spid", full_body=NO_RESULTS_HTML, stem_body=_card_html("Spider Man", "spider-man-2019"))
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(app))
+    results = await client.search("spiderman")
+    assert [r.title_en for r in results] == ["Spider Man"]
+    await client.close()
+
+
+async def test_search_fallback_returns_best_effort_when_nothing_strictly_matches(tmp_path: Path) -> None:
+    app = _fallback_app("spiderman", "spid", full_body=NO_RESULTS_HTML, stem_body=_card_html("Interstellar", "interstellar-2014"))
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(app))
+    results = await client.search("spiderman")
+    assert [r.title_en for r in results] == ["Interstellar"]
+    await client.close()
+
+
+async def test_search_no_fallback_for_short_queries(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def app(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url.params.get("s")))
+        return httpx.Response(200, text=NO_RESULTS_HTML)
+
+    client = ZarfilmClient(_config(tmp_path), transport=httpx.MockTransport(app))
+    assert await client.search("silo") == []
+    assert calls == ["silo"]
+    await client.close()

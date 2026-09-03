@@ -6,12 +6,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from src.handlers.card import EXPIRED_TEXT
 from src.handlers.common import edit_text_safely
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState
-from src.services.formatting import search_keyboard, welcome_keyboard
+from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.services.formatting import results_keyboard, welcome_keyboard
 from src.services.zarfilm import ZarfilmClient
 
 router = Router(name="search")
@@ -20,7 +21,7 @@ NO_RESULTS_TEXT = "چیزی پیدا نشد؛ با املای دیگری امت�
 LISTENING_TEXT = "نام فیلم یا سریال رو بنویس…"
 HINT_TEXT = "برای جستجو، اول دکمهٔ جستجو رو بزن."
 SEARCHING_TEXT = "🔍 در حال جستجو…"
-MAX_RESULTS = 5
+PAGE_SIZE = 5
 
 
 class SearchStates(StatesGroup):
@@ -35,10 +36,16 @@ async def begin_search(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-def results_header(query: str, total: int) -> str:
+def page_count(total: int) -> int:
+    return max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+
+def results_header(query: str, total: int, page: int = 0) -> str:
     header = f"نتایج برای «{escape(query)}»"
-    if total > MAX_RESULTS:
-        header += f" — نمایش {MAX_RESULTS} از {total}"
+    if total > PAGE_SIZE:
+        start = page * PAGE_SIZE + 1
+        end = min((page + 1) * PAGE_SIZE, total)
+        header += f" — نمایش {start}–{end} از {total}"
     return header + ":"
 
 
@@ -68,15 +75,48 @@ async def handle_search(
             await message.answer(NO_RESULTS_TEXT)
         return
     pairs: list[tuple[str, CardEntry]] = []
-    for summary in results[:MAX_RESULTS]:
+    for summary in results:
         entry = CardEntry(summary=summary)
-        key = card_state.create(entry)
-        pairs.append((key, entry))
-    keyboard = search_keyboard(pairs, emoji_map=cfg.emoji)
+        pairs.append((card_state.create(entry), entry))
+    search_key = card_state.create_search(SearchEntry(query=query, pairs=pairs))
+    pages = page_count(len(pairs))
+    keyboard = results_keyboard(pairs[:PAGE_SIZE], 0, pages, search_key, emoji_map=cfg.emoji)
+    header = results_header(query, len(pairs))
     if status is not None:
-        await status.edit_text(results_header(query, len(results)), reply_markup=keyboard)
+        await status.edit_text(header, reply_markup=keyboard)
     else:
-        await message.answer(results_header(query, len(results)), reply_markup=keyboard)
+        await message.answer(header, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("pg:"))
+async def change_page(
+    callback: CallbackQuery,
+    card_state: CallbackState,
+    cfg: Config,
+) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, key, value = parts
+    entry = card_state.get_search(key)
+    if entry is None:
+        await callback.answer(EXPIRED_TEXT, show_alert=True)
+        return
+    if value == "i":  # page indicator, not a button
+        await callback.answer()
+        return
+    if not value.isdigit() or int(value) >= page_count(entry.total):
+        await callback.answer()
+        return
+    page = int(value)
+    chunk = entry.pairs[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+    await edit_text_safely(
+        callback.message,
+        results_header(entry.query, entry.total, page),
+        reply_markup=results_keyboard(chunk, page, page_count(entry.total), key, emoji_map=cfg.emoji),
+    )
+    await callback.answer()
 
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))

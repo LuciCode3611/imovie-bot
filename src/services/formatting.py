@@ -55,11 +55,23 @@ def card_text(details: MovieDetails) -> str:
     return "\n".join(lines)
 
 
-def search_keyboard(
-    results: list[tuple[str, CardEntry]],
+def results_keyboard(
+    pairs: list[tuple[str, CardEntry]],
+    page: int,
+    page_count: int,
+    search_key: str,
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
-    rows = [[_result_button(key, entry, emoji_map)] for key, entry in results]
+    rows = [[_result_button(key, entry, emoji_map)] for key, entry in pairs]
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"pg:{search_key}:{page - 1}"))
+    if page_count > 1:
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{page_count}", callback_data=f"pg:{search_key}:i"))
+    if page < page_count - 1:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"pg:{search_key}:{page + 1}"))
+    if nav:
+        rows.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

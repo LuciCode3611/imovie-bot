@@ -11,7 +11,7 @@ from src.handlers import search
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CallbackState
+from src.repos.state import CardEntry, CallbackState, SearchEntry
 
 
 def _results() -> list[MovieSummary]:
@@ -144,3 +144,56 @@ async def test_free_text_hint_carries_search_button() -> None:
     message.answer.assert_awaited_once()
     kwargs = message.answer.await_args.kwargs
     assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "srch:go"
+
+
+def _results_page(n: int) -> list:
+    return [MovieSummary(slug=f"m{i}-2014", title_en=f"Movie {i}", year=2014) for i in range(n)]
+
+
+async def test_search_paginates_long_result_lists(deps: dict[str, Any]) -> None:
+    deps["zarfilm"].search = AsyncMock(return_value=_results_page(7))
+    message = _message("q")
+    await search.handle_search(message, **deps)  # type: ignore[arg-type]
+    status = message.answer.return_value
+    header = status.edit_text.await_args.args[0]
+    assert "نمایش 1–5 از 7" in header
+    kb = status.edit_text.await_args.kwargs["reply_markup"]
+    nav = kb.inline_keyboard[-1]
+    assert [b.text for b in nav] == ["1/2", "▶"]
+    assert nav[1].callback_data.startswith("pg:")
+
+
+async def test_change_page_edits_header_and_keyboard(deps: dict[str, Any]) -> None:
+    pairs = []
+    for summary in _results_page(7):
+        entry = CardEntry(summary=summary)
+        pairs.append((deps["card_state"].create(entry), entry))
+    skey = deps["card_state"].create_search(SearchEntry(query="q", pairs=pairs))
+
+    callback = _callback(f"pg:{skey}:1")
+    await search.change_page(callback, card_state=deps["card_state"], cfg=deps["cfg"])  # type: ignore[arg-type]
+    callback.message.edit_text.assert_awaited_once()
+    header = callback.message.edit_text.await_args.args[0]
+    assert "نمایش 6–7 از 7" in header
+    kb = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    assert [b.text for b in kb.inline_keyboard[-1]] == ["◀", "2/2"]
+    first_title = kb.inline_keyboard[0][0].text
+    assert "Movie 5" in first_title
+
+
+async def test_change_page_expired_key_alerts() -> None:
+    callback = _callback("pg:dead00:1")
+    await search.change_page(callback, card_state=CallbackState(ttl=60), cfg=Config(_env_file=None, bot_token="1:abc"))  # type: ignore[arg-type]
+    callback.answer.assert_awaited_once()
+    assert "منقضی" in callback.answer.await_args.args[0]
+
+
+async def test_change_page_indicator_and_out_of_range_answer_silently() -> None:
+    state = CallbackState(ttl=60)
+    entry = CardEntry(summary=_results_page(1)[0])
+    skey = state.create_search(SearchEntry(query="q", pairs=[(state.create(entry), entry)]))
+    for data in (f"pg:{skey}:i", f"pg:{skey}:9", f"pg:{skey}:x"):
+        callback = _callback(data)
+        await search.change_page(callback, card_state=state, cfg=Config(_env_file=None, bot_token="1:abc"))  # type: ignore[arg-type]
+        callback.answer.assert_awaited_once_with()
+        callback.message.edit_text.assert_not_awaited()
