@@ -1,12 +1,31 @@
 import json
 import re
+from urllib.parse import urlparse
 
 from selectolax.parser import HTMLParser
+from selectolax.parser import Node
 
 from src.exceptions import ParseError
-from src.models import MediaKind, MovieDetails, MovieSummary
+from src.models import (
+    DownloadLink,
+    EpisodeLink,
+    MediaKind,
+    MovieDetails,
+    MovieSummary,
+    QualityPack,
+    Season,
+)
 
 TITLE_PREFIXES = ("دانلود رایگان سریال ", "دانلود رایگان فیلم ", "دانلود سریال ", "دانلود انیمیشن ", "دانلود فیلم ")
+
+DL_HREF_PREFIX = "https://dl"
+SEASON_HEADING_TAGS = ("h2", "h3", "h4")
+SEASON_HEADING_WORD = "فصل"
+SEASON_LABEL_PATTERN = re.compile(r"فصل[\s\u200c]+\S+")
+QUALITY_PATTERN = re.compile(r"\d{3,4}p", re.IGNORECASE)
+EPISODE_PATTERN = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(گی[گک]ابایت|مگابایت|کیلوبایت|[GMK]i?B)", re.IGNORECASE)
+SIZE_UNITS = {"گیگابایت": "GB", "گیکابایت": "GB", "مگابایت": "MB", "کیلوبایت": "KB"}
 
 
 def parse_cookie_header(raw: str) -> dict[str, str]:
@@ -115,7 +134,86 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:
+    seen: set[str] = set()
+    seasons: dict[str, Season] = {}
+    current: Season | None = None
+    for node in html.root.traverse(include_text=False):
+        if node.tag in SEASON_HEADING_TAGS:
+            if SEASON_HEADING_WORD in node.text():
+                label = _season_label(node.text(strip=True))
+                current = seasons.setdefault(label, Season(label=label))
+            continue
+        if node.tag != "a":
+            continue
+        link = _download_link(node)
+        if link is None or link.url in seen:
+            continue
+        seen.add(link.url)
+        if current is not None:
+            _add_episode(current, link)
+        elif _is_dub(link):
+            details.dubs.append(link)
+        else:
+            details.originals.append(link)
+    if seasons:
+        details.seasons = list(seasons.values())
+        details.summary.kind = MediaKind.SERIES
     return details
+
+
+def _download_link(anchor: Node) -> DownloadLink | None:
+    href = anchor.attributes.get("href") or ""
+    if not href.startswith(DL_HREF_PREFIX):
+        return None
+    quality_match = QUALITY_PATTERN.search(urlparse(href).path) or QUALITY_PATTERN.search(anchor.text())
+    if quality_match is None:
+        return None
+    return DownloadLink(
+        quality=quality_match.group(0).lower(),
+        url=href,
+        size=_nearby_size(anchor),
+        host=urlparse(href).netloc or None,
+    )
+
+
+def _nearby_size(anchor: Node) -> str | None:
+    node = anchor.parent
+    for _ in range(4):
+        if node is None or node.tag == "body":
+            return None
+        if size_match := SIZE_PATTERN.search(node.text()):
+            return _normalize_size(size_match.group(1), size_match.group(2))
+        node = node.parent
+    return None
+
+
+def _normalize_size(value: str, unit: str) -> str:
+    unit = SIZE_UNITS.get(unit, unit.upper()).replace("IB", "B")
+    return f"{value} {unit}"
+
+
+def _is_dub(link: DownloadLink) -> bool:
+    return "dubbed" in urlparse(link.url).path.lower()
+
+
+def _season_label(heading_text: str) -> str:
+    match = SEASON_LABEL_PATTERN.search(heading_text)
+    return match.group(0).strip() if match else heading_text.strip()
+
+
+def _add_episode(season: Season, link: DownloadLink) -> None:
+    pack = next((q for q in season.qualities if q.quality == link.quality), None)
+    if pack is None:
+        pack = QualityPack(quality=link.quality)
+        season.qualities.append(pack)
+    pack.episodes.append(EpisodeLink(label=_episode_label(link.url), url=link.url, size=link.size, host=link.host))
+
+
+def _episode_label(url: str) -> str:
+    match = EPISODE_PATTERN.search(urlparse(url).path)
+    if match:
+        return f"S{match.group(1).zfill(2)}E{match.group(2).zfill(2)}"
+    return urlparse(url).path.rsplit("/", 1)[-1].rsplit(".", 1)[0].replace(".", " ")
 
 
 def _jsonld_graph(html: HTMLParser) -> dict:
