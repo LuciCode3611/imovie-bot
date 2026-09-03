@@ -47,9 +47,9 @@ def _message(text: str, user_id: int) -> Message:
 
 @pytest.fixture(autouse=True)
 def _reset_owner_alert_state() -> Iterator[None]:
-    common._owner_alert_state["last"] = 0.0
+    common._owner_alert_state["last"] = float("-inf")
     yield
-    common._owner_alert_state["last"] = 0.0
+    common._owner_alert_state["last"] = float("-inf")
 
 
 @pytest.fixture
