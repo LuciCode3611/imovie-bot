@@ -17,6 +17,7 @@ class Config(BaseSettings):
 
     bot_token: str
     allowed_user_ids: Annotated[list[int] | None, NoDecode] = None
+    owner_id: int | None = None
     session_path: Path = Path("session.json")
     search_ttl: int = 3600
     page_ttl: int = 21600
@@ -40,3 +41,12 @@ class Config(BaseSettings):
         if isinstance(value, str):
             return json.loads(value)
         return value
+
+
+def resolve_owner(cfg: Config) -> int | None:
+    """Return the bot owner: explicit OWNER_ID, else the first allowed user ID."""
+    if cfg.owner_id is not None:
+        return cfg.owner_id
+    if cfg.allowed_user_ids:
+        return cfg.allowed_user_ids[0]
+    return None

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
-from src.models.config import Config
+from src.models.config import Config, resolve_owner
 from src.services.parsers import filter_session_cookies, parse_cookie_header
 from src.services.zarfilm import ZarfilmClient
 
@@ -20,7 +20,7 @@ class LoginStates(StatesGroup):
 @router.message(F.text.startswith("/login"))
 async def start_login(message: Message, state: FSMContext, cfg: Config) -> None:
     user = message.from_user
-    if user is None or not cfg.allowed_user_ids or user.id != cfg.allowed_user_ids[0]:
+    if user is None or user.id != resolve_owner(cfg):
         return
     await state.set_state(LoginStates.waiting_cookie)
     await message.answer("مقدار کوکی مرورگر رو بفرست (name=value; ...).")
