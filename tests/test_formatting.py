@@ -17,6 +17,7 @@ from src.services.formatting import (
     root_keyboard,
     search_keyboard,
     season_quality_keyboard,
+    welcome_keyboard,
 )
 
 
@@ -29,14 +30,19 @@ def _details(dub: bool = False, series: bool = False) -> MovieDetails:
         genres=["درام", "علمی تخیلی"],
         kind=MediaKind.SERIES if series else MediaKind.MOVIE,
     )
-    link = DownloadLink(quality="1080p", url="https://dl.example.com/f.mkv", size="2.1GB", host="dl.example.com")
+    links = [
+        DownloadLink(quality="1080p", url="https://dl.example.com/f.mkv", size="2.1GB", host="dl.example.com"),
+        DownloadLink(quality="720p", url="https://dl.example.com/f720.mkv", size="1.4GB", host="dl.example.com"),
+        DownloadLink(quality="480p", url="https://dl.example.com/f480.mkv", size="800MB", host="dl.example.com"),
+    ]
+    episode = EpisodeLink(label="S01E01", url="https://dl.example.com/e01.mkv", size="300MB", host="dl.example.com")
     return MovieDetails(
         summary=summary,
         imdb="8.6",
         plot="در حالی که قحطی و گرسنگی به کره ی زمین چیره شده، گروهی از ستاره شناسان تصمیم میگیرند...",
-        dubs=[link] if dub else [],
-        originals=[] if series else [link],
-        seasons=[Season(label="فصل اول", qualities=[QualityPack(quality="1080p", episodes=[EpisodeLink(label="S01E01", url="https://dl.example.com/e01.mkv", size="300MB", host="dl.example.com")])])] if series else [],
+        dubs=links[:1] if dub else [],
+        originals=[] if series else links,
+        seasons=[Season(label="فصل اول", qualities=[QualityPack(quality="1080p", episodes=[episode])])] if series else [],
     )
 
 
@@ -60,6 +66,7 @@ def test_root_keyboard_no_dub_goes_straight_to_qualities() -> None:
     flat = [btn for row in kb.inline_keyboard for btn in row]
     assert flat[0].text == "1080p - 2.1GB"
     assert flat[0].callback_data == "q:abc123:orig:0"
+    assert all(len(row) == 1 for row in kb.inline_keyboard)
 
 
 def test_root_keyboard_series_shows_seasons() -> None:
@@ -74,6 +81,16 @@ def test_quality_keyboard_has_cancel() -> None:
     assert flat[0].text == "1080p - 2.1GB" and flat[0].style == "primary"
     cancel = flat[-1]
     assert cancel.text == "انصراف" and cancel.style == "danger" and cancel.callback_data == "x:abc123"
+    assert all(len(row) == 1 for row in kb.inline_keyboard)
+
+
+def test_quality_buttons_stack_vertically() -> None:
+    kb = quality_keyboard(_details().originals, "abc123", "orig")
+    rows = kb.inline_keyboard
+    assert [len(row) for row in rows] == [1, 1, 1, 1]
+    assert [row[0].text for row in rows] == ["1080p - 2.1GB", "720p - 1.4GB", "480p - 800MB", "انصراف"]
+    root = root_keyboard(_details(dub=False), "abc123")
+    assert [len(row) for row in root.inline_keyboard] == [1, 1, 1]
 
 
 def test_file_keyboard_url_buttons() -> None:
@@ -106,6 +123,15 @@ def test_search_keyboard() -> None:
     assert btn.callback_data == "m:aaaaaa" and btn.style == "primary"
 
 
+def test_welcome_keyboard_single_search_button() -> None:
+    kb = welcome_keyboard()
+    assert len(kb.inline_keyboard) == 1
+    assert len(kb.inline_keyboard[0]) == 1
+    btn = kb.inline_keyboard[0][0]
+    assert btn.text == "🔍 جستجو" and btn.callback_data == "srch:go" and btn.style == "primary"
+    assert btn.icon_custom_emoji_id is None
+
+
 def test_apply_icon_fallback_and_custom() -> None:
     from aiogram.types import InlineKeyboardButton
 
@@ -117,7 +143,9 @@ def test_apply_icon_fallback_and_custom() -> None:
 
 def test_season_quality_keyboard_lists_packs_with_cancel() -> None:
     kb = season_quality_keyboard([QualityPack(quality="1080p"), QualityPack(quality="720p")], "abc123")
-    flat = [btn for row in kb.inline_keyboard for btn in row]
+    rows = kb.inline_keyboard
+    assert [len(row) for row in rows] == [1, 1, 1]
+    flat = [btn for row in rows for btn in row]
     assert flat[0].text == "1080p" and flat[0].callback_data == "q:abc123:s:0" and flat[0].style == "primary"
     assert flat[1].text == "720p" and flat[1].callback_data == "q:abc123:s:1"
     assert flat[-1].text == "انصراف" and flat[-1].style == "danger" and flat[-1].callback_data == "x:abc123"

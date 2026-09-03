@@ -48,6 +48,14 @@ def search_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def welcome_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
+        ]
+    )
+
+
 def _result_button(key: str, entry: CardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
     s = entry.summary
     text = s.title_en + (f" ({s.year})" if s.year else "")
@@ -113,11 +121,10 @@ def _quality_rows(
     audio: str,
     emoji_map: dict[str, str] | None,
 ) -> list[list[InlineKeyboardButton]]:
-    row = [
-        _icon_button(_quality_label(link), "quality", emoji_map, callback_data=f"q:{key}:{audio}:{idx}", style=ButtonStyle.PRIMARY)
+    return [
+        [_icon_button(_quality_label(link), "quality", emoji_map, callback_data=f"q:{key}:{audio}:{idx}", style=ButtonStyle.PRIMARY)]
         for idx, link in enumerate(links)
     ]
-    return [row] if row else []
 
 
 def _quality_label(link: DownloadLink) -> str:

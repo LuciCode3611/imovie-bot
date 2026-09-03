@@ -1,6 +1,8 @@
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, User
 
 from src.handlers import search
@@ -22,17 +24,24 @@ def _message(text: str, user_id: int = 42) -> Message:
     return message
 
 
+def _state() -> FSMContext:
+    state = AsyncMock(spec=FSMContext)
+    state.clear = AsyncMock()
+    return state
+
+
 @pytest.fixture
-def deps() -> dict[str, object]:
+def deps() -> dict[str, Any]:
     return {
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
         "cfg": Config(_env_file=None, bot_token="1:abc"),
+        "state": _state(),
     }
 
 
-async def test_search_replies_with_result_buttons(deps: dict[str, object]) -> None:
+async def test_search_replies_with_result_buttons(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=_results())
     message = _message("interstellar")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
@@ -42,7 +51,7 @@ async def test_search_replies_with_result_buttons(deps: dict[str, object]) -> No
     assert kb.inline_keyboard[0][0].callback_data.startswith("m:")
 
 
-async def test_search_no_results_message(deps: dict[str, object]) -> None:
+async def test_search_no_results_message(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=[])
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
@@ -50,9 +59,24 @@ async def test_search_no_results_message(deps: dict[str, object]) -> None:
     assert "پیدا نشد" in text
 
 
-async def test_search_uses_cache_before_site(deps: dict[str, object]) -> None:
+async def test_search_uses_cache_before_site(deps: dict[str, Any]) -> None:
     await deps["cache"].set("search:interstellar", _results(), ttl=60)
     deps["zarfilm"].search = AsyncMock()
     message = _message("interstellar")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
     deps["zarfilm"].search.assert_not_awaited()
+
+
+async def test_state_cleared_after_results(deps: dict[str, Any]) -> None:
+    deps["zarfilm"].search = AsyncMock(return_value=_results())
+    message = _message("interstellar")
+    await search.handle_search(message, **deps)  # type: ignore[arg-type]
+    deps["state"].clear.assert_awaited_once()
+
+
+async def test_state_cleared_after_no_results(deps: dict[str, Any]) -> None:
+    deps["zarfilm"].search = AsyncMock(return_value=[])
+    message = _message("qqqqqq")
+    await search.handle_search(message, **deps)  # type: ignore[arg-type]
+    message.answer.assert_awaited_once()
+    deps["state"].clear.assert_awaited_once()
