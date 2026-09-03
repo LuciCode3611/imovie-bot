@@ -14,7 +14,7 @@ from src.services.zarfilm import ZarfilmClient  # noqa: E402
 FIXTURES = Path("tests/fixtures")
 TARGETS = {
     "movie_interstellar_authed.html": "/interstellar-2014/",
-    "series_dub_authed.html": "<OWNER_SUPPLIES_SERIES_SLUG>",
+    "series_dub_authed.html": "/batman-knightfall-part-1-knightfall-2026/",
 }
 
 
