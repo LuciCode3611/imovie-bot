@@ -27,7 +27,7 @@ SESSION_EXPIRED_TEXT = "نشست منقضی شده؛ با /login کوکی جدی
 NOT_MODIFIED_MARKER = "message is not modified"
 
 _OWNER_ALERT_COOLDOWN = 600.0
-_owner_alert_state = {"last": 0.0}
+_owner_alert_state = {"last": float("-inf")}
 
 
 @router.message(F.text.startswith("/start"))

@@ -138,6 +138,11 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:
+    seasons = _parse_season_rows(html)
+    if seasons:
+        details.seasons = seasons
+        details.summary.kind = MediaKind.SERIES
+        return details
     seen: set[str] = set()
     seasons: dict[str, Season] = {}
     current: Season | None = None
@@ -163,6 +168,66 @@ def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails
         details.seasons = list(seasons.values())
         details.summary.kind = MediaKind.SERIES
     return details
+
+
+def _parse_season_rows(html: HTMLParser) -> list[Season]:
+    seasons: list[Season] = []
+    seen_urls: set[str] = set()
+    for row in html.css(".single_dlbox .row_season_n_dl"):
+        label = _season_row_label(row)
+        season = next((item for item in seasons if item.label == label), None)
+        if season is None:
+            season = Season(label=label)
+            seasons.append(season)
+        for quality_row in row.css(".item_quality_n_row"):
+            _add_quality_row(season, quality_row, seen_urls)
+    return seasons
+
+
+def _season_row_label(row: Node) -> str:
+    node = row.css_first(".title_series_row_n .season_name")
+    if node is not None:
+        return node.text(strip=True) or "فصل"
+    return _season_label(row.text(strip=True)) or "فصل"
+
+
+def _add_quality_row(season: Season, row: Node, seen_urls: set[str]) -> None:
+    links: list[DownloadLink] = []
+    for anchor in row.css("a.dllinkhref"):
+        link = _download_link(anchor)
+        if link is None or link.url in seen_urls:
+            continue
+        seen_urls.add(link.url)
+        links.append(link)
+    if not links:
+        return
+    quality = _quality_pack_label(row, links[0])
+    pack = next((item for item in season.qualities if item.quality == quality), None)
+    if pack is None:
+        pack = QualityPack(quality=quality)
+        season.qualities.append(pack)
+    for link in links:
+        if any(episode.url == link.url for episode in pack.episodes):
+            continue
+        pack.episodes.append(
+            EpisodeLink(label=_episode_label(link.url), url=link.url, size=link.size, host=link.host)
+        )
+
+
+def _quality_pack_label(row: Node, link: DownloadLink) -> str:
+    label = link.quality
+    if link.size:
+        label = f"{label} - {link.size}"
+    if _is_dub_row(row):
+        label += " (دوبله)"
+    return label
+
+
+def _is_dub_row(row: Node) -> bool:
+    if row.css_first(".label_row_q_n.dubled_ba"):
+        return True
+    anchor = row.css_first("a.dllinkhref")
+    return bool(anchor and "dubbed" in (anchor.attributes.get("href") or "").lower())
 
 
 def _download_link(anchor: Node) -> DownloadLink | None:

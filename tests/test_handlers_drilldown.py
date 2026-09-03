@@ -6,6 +6,7 @@ import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 from aiogram.types import CallbackQuery, Message, User
+from selectolax.parser import HTMLParser
 
 from src.handlers import admin, card
 from src.models import (
@@ -19,6 +20,7 @@ from src.models import (
 )
 from src.models.config import Config
 from src.repos.state import CallbackState, CardEntry
+from src.services.parsers import parse_movie
 
 
 def _movie_details(dub: bool = True) -> MovieDetails:
@@ -126,6 +128,35 @@ async def test_quality_choice_series_sends_episode_list_and_reverts(deps: dict[s
     assert "S01E01" in message.answer.await_args.args[0]
     message.edit_reply_markup.assert_awaited_once()
     assert entry.selection == ""
+
+
+async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "lanterns.html"
+    details = parse_movie(HTMLParser(fixture.read_text(encoding="utf-8")), "lanterns")
+    deps["cache"].get = AsyncMock(return_value=None)
+    deps["zarfilm"].movie = AsyncMock(return_value=details)
+    entry = CardEntry(summary=details.summary)
+    key = deps["card_state"].create(entry)
+    message = AsyncMock()
+    message.edit_text = AsyncMock()
+    message.answer_photo = AsyncMock(
+        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="photo rejected")
+    )
+    await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
+    text = message.edit_text.await_args.args[0]
+    assert text.startswith("📺 سریال | Lanterns")
+    root_kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert root_kb.inline_keyboard[0][0].text.endswith("فصل 1")
+
+    message.edit_reply_markup = AsyncMock()
+    await card.choose_season(_cb(f"s:{key}:0", message), **deps)  # type: ignore[arg-type]
+    season_kb = message.edit_reply_markup.await_args.kwargs["reply_markup"]
+    assert season_kb.inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
+
+    message.answer = AsyncMock()
+    message.edit_reply_markup = AsyncMock()
+    await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
+    assert "S01E01" in message.answer.await_args.args[0]
 
 
 async def test_cancel_returns_to_root(deps: dict[str, object]) -> None:

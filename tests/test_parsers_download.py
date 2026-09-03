@@ -4,6 +4,7 @@ from pathlib import Path
 from selectolax.parser import HTMLParser
 
 from src.models import MediaKind
+from src.services.formatting import card_text
 from src.services.parsers import parse_movie
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -48,6 +49,40 @@ def test_series_page_without_seasons_parses() -> None:
     assert not details.is_series
     assert details.originals
     assert details.dubs
+
+
+def test_real_series_page_yields_seasons_and_sizes() -> None:
+    details = _parse("lanterns.html", "lanterns")
+    assert details.is_series
+    assert details.originals == []
+    assert details.dubs == []
+    assert [season.label for season in details.seasons] == ["فصل 1"]
+    assert len(details.seasons[0].qualities) == 13
+    pack = details.seasons[0].qualities[0]
+    assert pack.quality == "1080p - 2.2 GB"
+    assert [episode.label for episode in pack.episodes] == ["S01E01", "S01E02", "S01E03"]
+    assert all(episode.size == "2.2 GB" for episode in pack.episodes)
+    assert all(episode.host and "dl" in episode.host for episode in pack.episodes)
+
+
+def test_real_series_page_keeps_dub_rows_and_skips_sound_tracks() -> None:
+    details = _parse("lanterns.html", "lanterns")
+    packs = details.seasons[0].qualities
+    dub_packs = [pack for pack in packs if pack.quality.endswith("(دوبله)")]
+    assert len(dub_packs) == 6
+    for pack in dub_packs:
+        assert pack.episodes
+        for episode in pack.episodes:
+            assert "dubbed" in episode.url.lower()
+            assert "audio.web" not in episode.url.lower()
+
+
+def test_real_series_card_header_shows_series_kind() -> None:
+    details = _parse("lanterns.html", "lanterns")
+    text = card_text(details)
+    assert text.startswith("📺 سریال | Lanterns")
+    assert "zarfilm" not in text.lower()
+    assert "زرفیلم" not in text
 
 
 def test_size_extraction_best_effort() -> None:
