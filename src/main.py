@@ -52,7 +52,6 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
 USER_COMMANDS = [
     BotCommand(command="start", description="شروع و منوی اصلی"),
     BotCommand(command="search", description="جستجوی فیلم، سریال یا انیمه"),
-    BotCommand(command="help", description="راهنمای استفاده"),
 ]
 OWNER_COMMANDS = [
     *USER_COMMANDS,

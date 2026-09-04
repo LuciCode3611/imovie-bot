@@ -85,11 +85,6 @@ async def start(message: Message, state: FSMContext, cfg: Config) -> None:
     await send_welcome(message, cfg)
 
 
-@router.message(F.text.startswith("/help"))
-async def help_(message: Message, cfg: Config) -> None:
-    await send_welcome(message, cfg)
-
-
 async def edit_text_safely(message: Message, text: str, **kwargs: Any) -> None:
     try:
         await message.edit_text(text, **kwargs)
