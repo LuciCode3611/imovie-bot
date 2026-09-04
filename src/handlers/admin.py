@@ -13,9 +13,10 @@ from aiogram.types import (
     Message,
 )
 
+from src.handlers import admin_views
 from src.models.config import Config, resolve_owner
+from src.repos.db import Database
 from src.services.parsers import filter_session_cookies, parse_cookies
-from src.services.rich import rich_dashboard_message
 from src.services.zarfilm import ZarfilmClient
 
 router = Router(name="admin")
@@ -50,13 +51,7 @@ def cookie_prompt_keyboard() -> InlineKeyboardMarkup:
 
 
 def dashboard_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 بررسی اتصال", callback_data="dash:check")],
-            [InlineKeyboardButton(text="🔑 ورود / تمدید کوکی", callback_data="dash:login", style=ButtonStyle.SUCCESS)],
-            [InlineKeyboardButton(text="✖ بستن", callback_data="dash:close", style=ButtonStyle.DANGER)],
-        ]
-    )
+    return admin_views.overview_keyboard()
 
 
 @router.message(F.text.startswith("/login"))
@@ -96,6 +91,7 @@ async def dashboard_action(
     cfg: Config,
     zarfilm: ZarfilmClient,
     state: FSMContext,
+    db: Database,
 ) -> None:
     if not _is_owner(callback.from_user, cfg):
         await callback.answer("فقط برای مالک.", show_alert=True)
@@ -122,58 +118,171 @@ async def dashboard_action(
         return
 
     if action == "open":
-        stats = await _gather_stats(zarfilm, cfg)
-        await _send_dashboard(bot, callback.message, stats)
+        stats = await _gather_stats(zarfilm, cfg, db)
+        await _send_view(
+            bot,
+            callback.message,
+            rich=admin_views.overview_rich(stats),
+            text=admin_views.overview_text(stats),
+            markup=admin_views.overview_keyboard(),
+        )
         await callback.answer()
         return
 
     # default: check / refresh
     await callback.answer(CHECKING_TEXT)
-    stats = await _gather_stats(zarfilm, cfg)
-    await _edit_dashboard(bot, callback.message, stats)
+    stats = await _gather_stats(zarfilm, cfg, db)
+    await _edit_overview(bot, callback.message, stats)
     await callback.answer(REFRESHED_TEXT)
 
 
 @router.message(F.text.startswith("/status"))
-async def dashboard(message: Message, bot: Bot, cfg: Config, zarfilm: ZarfilmClient) -> None:
+async def dashboard(message: Message, bot: Bot, cfg: Config, zarfilm: ZarfilmClient, db: Database) -> None:
     if not _is_owner(message.from_user, cfg):
         return
-    stats = await _gather_stats(zarfilm, cfg)
-    await _send_dashboard(bot, message, stats)
+    stats = await _gather_stats(zarfilm, cfg, db)
+    await _send_overview(bot, message, stats)
 
 
-async def _send_dashboard(bot: Bot, target: Message, stats: dict) -> None:
+async def _send_overview(bot: Bot, target: Message, stats: dict) -> None:
     try:
         await bot.send_rich_message(
-            chat_id=target.chat.id, rich_message=rich_dashboard_message(stats), reply_markup=dashboard_keyboard()
+            chat_id=target.chat.id,
+            rich_message=admin_views.overview_rich(stats),
+            reply_markup=admin_views.overview_keyboard(),
         )
     except TelegramBadRequest:
-        await target.answer(_dashboard_text(stats), reply_markup=dashboard_keyboard())
+        await target.answer(
+            admin_views.overview_text(stats),
+            reply_markup=admin_views.overview_keyboard(),
+            parse_mode="HTML",
+        )
 
 
-async def _edit_dashboard(bot: Bot, target: Message, stats: dict) -> None:
-    """Re-render the dashboard in place. The message is already a rich
-    message, so edit it as rich; a TelegramBadRequest that isn't a structural
-    failure is swallowed and surfaced as an alert rather than downgrading to
-    the plain (messy, table-less) fallback."""
+async def _edit_overview(bot: Bot, target: Message, stats: dict) -> None:
+    """Re-render the overview in place; on a structural failure edit markup
+    only so the user still sees fresh buttons rather than a downgraded body."""
     try:
         await bot.edit_message_text(
             chat_id=target.chat.id,
             message_id=target.message_id,
             text=None,
-            rich_message=rich_dashboard_message(stats),
-            reply_markup=dashboard_keyboard(),
+            rich_message=admin_views.overview_rich(stats),
+            reply_markup=admin_views.overview_keyboard(),
         )
     except TelegramBadRequest as exc:
         if "message is not modified" in (exc.message or ""):
             return
-        # last resort: edit the markup only so the user at least sees fresh
-        # buttons without a broken, table-less body
         with contextlib.suppress(TelegramBadRequest):
-            await target.edit_reply_markup(reply_markup=dashboard_keyboard())
+            await target.edit_reply_markup(reply_markup=admin_views.overview_keyboard())
 
 
-async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config) -> dict:
+async def _send_view(
+    bot: Bot,
+    target: Message,
+    *,
+    rich: object,
+    text: str,
+    markup: InlineKeyboardMarkup,
+) -> None:
+    """Edit the dashboard message into a management view (users/requests);
+    fall back to a plain edit when the rich edit fails."""
+    try:
+        await bot.edit_message_text(
+            chat_id=target.chat.id,
+            message_id=target.message_id,
+            text=None,
+            rich_message=rich,
+            reply_markup=markup,
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" in (exc.message or ""):
+            return
+        with contextlib.suppress(TelegramBadRequest):
+            await target.edit_text(text, reply_markup=markup, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm:"))
+async def admin_manage(
+    callback: CallbackQuery,
+    bot: Bot,
+    cfg: Config,
+    db: Database,
+) -> None:
+    if not _is_owner(callback.from_user, cfg):
+        await callback.answer("فقط برای مالک.", show_alert=True)
+        return
+    parts = (callback.data or "").split(":")
+    action = parts[1] if len(parts) > 1 else "nop"
+
+    if action in ("nop", "noop"):
+        await callback.answer()
+        return
+
+    if action == "users":
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        total = db.count_users()
+        users = db.list_users(limit=admin_views.USERS_PAGE, offset=page * admin_views.USERS_PAGE)
+        await _send_view(
+            bot,
+            callback.message,
+            rich=admin_views.users_rich(users, page, total),
+            text=admin_views.users_text(users, page, total),
+            markup=admin_views.users_keyboard(users, page, total),
+        )
+        await callback.answer()
+        return
+
+    if action == "reqs":
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        total = db.count_open_requests()
+        reqs = db.list_requests("open", limit=admin_views.REQUESTS_PAGE, offset=page * admin_views.REQUESTS_PAGE)
+        await _send_view(
+            bot,
+            callback.message,
+            rich=admin_views.requests_rich(reqs, page, total),
+            text=admin_views.requests_text(reqs, page, total),
+            markup=admin_views.requests_keyboard(reqs, page, total),
+        )
+        await callback.answer()
+        return
+
+    if action in ("blk", "unblk"):
+        user_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        if user_id and user_id != _owner_id(cfg):
+            db.set_blocked(user_id, action == "blk")
+        total = db.count_users()
+        users = db.list_users(limit=admin_views.USERS_PAGE)
+        await _send_view(
+            bot,
+            callback.message,
+            rich=admin_views.users_rich(users, 0, total),
+            text=admin_views.users_text(users, 0, total),
+            markup=admin_views.users_keyboard(users, 0, total),
+        )
+        await callback.answer("انجام شد.")
+        return
+
+    if action in ("rdone", "rrej"):
+        req_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        if req_id:
+            db.set_request_status(req_id, "done" if action == "rdone" else "rejected")
+        total = db.count_open_requests()
+        reqs = db.list_requests("open", limit=admin_views.REQUESTS_PAGE)
+        await _send_view(
+            bot,
+            callback.message,
+            rich=admin_views.requests_rich(reqs, 0, total),
+            text=admin_views.requests_text(reqs, 0, total),
+            markup=admin_views.requests_keyboard(reqs, 0, total),
+        )
+        await callback.answer("درخواست به‌روزرسانی شد.")
+        return
+
+    await callback.answer()
+
+
+async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None = None) -> dict:
     present = zarfilm._restore_session()  # loads any persisted session
     valid: bool | None = None
     if present:
@@ -181,31 +290,21 @@ async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config) -> dict:
             valid = await zarfilm.session_valid()
         except Exception:  # noqa: BLE001 - the check must never break the panel
             valid = None
-    return {
+    stats = {
         "online": True,
         "session_present": present,
         "session_valid": valid,
         "ttl": zarfilm.session_ttl_seconds(),
         "uptime": zarfilm.uptime_seconds(),
+        "ttl_human": admin_views.persian_ttl(zarfilm.session_ttl_seconds()),
+        "uptime_human": admin_views.persian_ttl(zarfilm.uptime_seconds()),
         "searches": zarfilm.stats.get("searches", 0),
         "movies": zarfilm.stats.get("movies", 0),
         "open_mode": not bool(cfg.allowed_user_ids),
         "proxy": cfg.proxy_url,
     }
-
-
-def _dashboard_text(stats: dict) -> str:
-    if not stats.get("session_present"):
-        cookie = "🔴 بدون کوکی"
-    elif stats.get("session_valid") is True:
-        cookie = "🟢 معتبر"
-    elif stats.get("session_valid") is False:
-        cookie = "🔴 منقضی شده"
-    else:
-        cookie = "🟡 نامشخص"
-    return (
-        "🛠 داشبورد مدیریت ربات\n\n"
-        f"وضعیت ربات: 🟢 آنلاین\n"
-        f"کوکی نشست: {cookie}\n"
-        f"جستجوها: {stats.get('searches', 0)}"
-    )
+    if db is not None:
+        stats.update(db.stats())
+        # keep the in-process search counter distinct from the persisted one
+        stats["searches_total"] = db.total_searches()
+    return stats

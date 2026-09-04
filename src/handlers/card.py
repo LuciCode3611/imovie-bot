@@ -55,7 +55,13 @@ async def open_card(
         await cache.set(page_key, details, cfg.page_ttl)
     entry.details = details
     has_links = bool(details.originals or details.dubs or details.seasons)
-    markup = root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None
+    if has_links:
+        markup = root_keyboard(details, key, emoji_map=cfg.emoji)
+    else:
+        # title exists but no downloadable links — let the user request it
+        from src.handlers.requests import request_prompt_keyboard
+
+        markup = request_prompt_keyboard()
     # Bot API 10.1 rich card: poster + centered borderless metadata table +
     # centered story pull-quote in a single new message
     try:

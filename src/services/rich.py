@@ -122,58 +122,7 @@ def rich_episode_message(
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 
-def rich_dashboard_message(stats: dict) -> InputRichMessage:
-    """Owner dashboard rich message. ``stats`` keys:
-    online, session_present, session_valid (bool|None), ttl (seconds|None),
-    uptime (seconds|None), users, searches, movies, open_mode (bool),
-    proxy (str|None)."""
-    online = "🟢 آنلاین" if stats.get("online") else "🔴 آفلاین"
-    if not stats.get("session_present"):
-        cookie = "🔴 بدون کوکی"
-    elif stats.get("session_valid") is True:
-        cookie = "🟢 معتبر"
-    elif stats.get("session_valid") is False:
-        cookie = "🔴 منقضی شده"
-    else:
-        cookie = "🟡 نامشخص"
-
-    def s(value: str, header: bool = False) -> RichBlockTableCell:
-        return _cell(value, header=header)
-
-    rows = [
-        [s("وضعیت ربات", header=True), s(online)],
-        [s("کوکی نشست", header=True), s(cookie)],
-        [s("اعتبار باقی‌مانده", header=True), s(_persian_ttl(stats.get("ttl")) or "—")],
-        [s("مدت روشن بودن", header=True), s(_persian_ttl(stats.get("uptime")) or "—")],
-        [s("دسترسی کاربران", header=True), s("🔓 باز برای همه" if stats.get("open_mode") else "🔒 فقط لیست مجاز")],
-        [s("پروکسی", header=True), s("🟢 فعال" if stats.get("proxy") else "—")],
-        [s("جستجوها", header=True), s(f"🔍 {stats.get('searches', 0)}")],
-        [s("صفحه‌های باز شده", header=True), s(f"🎬 {stats.get('movies', 0)}")],
-    ]
-    table = InputRichBlockTable(is_bordered=False, is_compact=True, cells=rows)
-    return InputRichMessage(
-        blocks=[InputRichBlockSectionHeading(text="🛠 داشبورد مدیریت ربات", size=2), table],
-        is_rtl=True,
-    )
-
-
-def _persian_ttl(seconds: int | None) -> str | None:
-    if seconds is None:
-        return None
-    days, rem = divmod(int(seconds), 86400)
-    hours = rem // 3600
-    parts = []
-    if days:
-        parts.append(f"{days} روز")
-    if hours:
-        parts.append(f"{hours} ساعت")
-    if not parts:
-        return f"{int(seconds) // 60} دقیقه"
-    return " و ".join(parts)
-
-
 __all__ = [
     "rich_card_message",
-    "rich_dashboard_message",
     "rich_episode_message",
 ]

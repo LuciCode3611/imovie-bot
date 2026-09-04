@@ -47,10 +47,12 @@ def _detach_routers() -> Iterator[None]:
     from src.handlers import admin as admin_module
     from src.handlers import card as card_module
     from src.handlers import common as common_module
+    from src.handlers import requests as requests_module
     from src.handlers import search as search_module
 
     for router in (
         common_module.router,
+        requests_module.router,
         search_module.router,
         card_module.router,
         admin_module.router,

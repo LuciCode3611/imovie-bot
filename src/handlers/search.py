@@ -13,6 +13,7 @@ from src.handlers.common import edit_text_safely
 from src.models import MovieSummary
 from src.models.config import Config, resolve_owner
 from src.repos.cache import TTLCache
+from src.repos.db import Database
 from src.repos.state import CallbackState, CardEntry, SearchEntry
 from src.services.formatting import results_keyboard, welcome_keyboard
 from src.services.zarfilm import ZarfilmClient
@@ -81,9 +82,12 @@ async def handle_search(
     cache: TTLCache,
     card_state: CallbackState,
     cfg: Config,
+    db: Database,
 ) -> None:
     query = (message.text or "").strip()
     cache_key = f"search:{query.lower()}"
+    if message.from_user is not None:
+        db.increment_searches(message.from_user.id)
     results: list[MovieSummary] | None = await cache.get(cache_key)
     status = None
     if results is None:
@@ -99,6 +103,16 @@ async def handle_search(
             await status.edit_text(NO_RESULTS_TEXT)
         else:
             await message.answer(NO_RESULTS_TEXT)
+        # offer a «request this title» prompt on a fresh message (the search
+        # status message is owned by the search router)
+        from src.handlers.requests import RequestStates
+
+        await state.set_state(RequestStates.title)
+        await state.update_data(req_query=query[:200])
+        await message.answer(
+            f"📥 «{query}» رو پیدا نکردیم؛ اگه می‌خوای برامون درخواستش کنی، "
+            "همین اسم رو بفرست یا اسم کامل‌تری بنویس.",
+        )
         return
     pairs: list[tuple[str, CardEntry]] = []
     for summary in results:

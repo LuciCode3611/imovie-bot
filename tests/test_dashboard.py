@@ -1,9 +1,9 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-
 from aiogram.types import Message, User
 
 from src.handlers import admin
@@ -31,10 +31,13 @@ def client() -> ZarfilmClient:
     )
 
 
-async def test_dashboard_owner_sends_rich_message(client: ZarfilmClient) -> None:
+async def test_dashboard_owner_sends_rich_message(client: ZarfilmClient, tmp_path: Path) -> None:
+    from src.repos.db import Database
+
     bot = AsyncMock()
     message = _msg()
-    await admin.dashboard(message, bot=bot, cfg=_cfg(), zarfilm=client)  # type: ignore[arg-type]
+    db = Database(tmp_path / "dash.db")
+    await admin.dashboard(message, bot=bot, cfg=_cfg(), zarfilm=client, db=db)  # type: ignore[arg-type]
     bot.send_rich_message.assert_awaited_once()
     rich = bot.send_rich_message.await_args.kwargs["rich_message"]
     table = next(b for b in rich.model_dump(exclude_none=True)["blocks"] if b["type"] == "table")
@@ -45,12 +48,14 @@ async def test_dashboard_owner_sends_rich_message(client: ZarfilmClient) -> None
 async def test_dashboard_non_owner_is_ignored(client: ZarfilmClient) -> None:
     bot = AsyncMock()
     message = _msg(owner=999)
-    await admin.dashboard(message, bot=bot, cfg=_cfg(), zarfilm=client)  # type: ignore[arg-type]
+    await admin.dashboard(message, bot=bot, cfg=_cfg(), zarfilm=client, db=AsyncMock())  # type: ignore[arg-type]
     bot.send_rich_message.assert_not_awaited()
     message.answer.assert_not_awaited()
 
 
-async def test_dashboard_refresh_checks_session() -> None:
+async def test_dashboard_refresh_checks_session(tmp_path: Path) -> None:
+    from src.repos.db import Database
+
     bot = AsyncMock()
     message = _msg()
     message.message_id = 7
@@ -65,7 +70,15 @@ async def test_dashboard_refresh_checks_session() -> None:
     cb.message = message
     cb.data = "dash:check"
     cb.answer = AsyncMock()
-    await admin.dashboard_action(cb, bot=bot, cfg=_cfg(), zarfilm=zarfilm, state=AsyncMock())  # type: ignore[arg-type]
+    db = Database(tmp_path / "dash.db")
+    await admin.dashboard_action(  # type: ignore[arg-type]
+        cb,
+        bot=bot,
+        cfg=_cfg(),
+        zarfilm=zarfilm,
+        state=AsyncMock(),
+        db=db,
+    )
     zarfilm.session_valid.assert_awaited_once()
     bot.edit_message_text.assert_awaited_once()
 

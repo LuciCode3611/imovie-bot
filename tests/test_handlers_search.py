@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -12,7 +13,7 @@ from src.handlers import search
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 
 
 def _results() -> list[MovieSummary]:
@@ -35,7 +36,9 @@ def _state() -> FSMContext:
 
 
 @pytest.fixture
-def deps() -> dict[str, Any]:
+def deps(tmp_path: Path) -> dict[str, Any]:
+    from src.repos.db import Database
+
     return {
         "bot": AsyncMock(),
         "cache": TTLCache(),
@@ -43,6 +46,7 @@ def deps() -> dict[str, Any]:
         "zarfilm": AsyncMock(),
         "cfg": Config(_env_file=None, bot_token="1:abc"),
         "state": _state(),
+        "db": Database(tmp_path / "test.db"),
     }
 
 
@@ -70,7 +74,9 @@ async def test_cached_search_skips_loading_message(deps: dict[str, Any]) -> None
     message.answer.return_value.edit_text.assert_not_awaited()
 
 
-async def test_search_threads_custom_emoji_map(tmp_path) -> None:
+async def test_search_threads_custom_emoji_map(tmp_path: Path) -> None:
+    from src.repos.db import Database
+
     deps_local: dict[str, Any] = {
         "bot": AsyncMock(),
         "cache": TTLCache(),
@@ -78,6 +84,7 @@ async def test_search_threads_custom_emoji_map(tmp_path) -> None:
         "zarfilm": AsyncMock(search=AsyncMock(return_value=_results())),
         "cfg": Config(_env_file=None, bot_token="1:abc", emoji={"result": "555"}),
         "state": _state(),
+        "db": Database(tmp_path / "test.db"),
     }
     message = _message("interstellar")
     await search.handle_search(message, **deps_local)  # type: ignore[arg-type]
@@ -112,8 +119,12 @@ async def test_state_cleared_after_no_results(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=[])
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
-    message.answer.assert_awaited_once()
+    # no-results notice + the request prompt
+    assert message.answer.await_count == 2
     deps["state"].clear.assert_awaited_once()
+    deps["state"].set_state.assert_awaited_once()
+    # the request is recorded when the user sends the title
+    assert deps["db"].count_open_requests() == 0
 
 
 def _callback(data: str) -> CallbackQuery:
