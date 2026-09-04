@@ -71,3 +71,33 @@ def test_search_parses_movie_cards_as_movie_kind() -> None:
     html = HTMLParser(_cards_html(_card("movie", "Silo", "silo-2023")))
     results = parse_search(html)
     assert results[0].kind is MediaKind.MOVIE
+
+
+def test_search_titles_have_persian_prefixes_stripped() -> None:
+    html = HTMLParser(_cards_html(_card("movie", "دانلود انیمه Black Torch", "black-torch-2025")))
+    results = parse_search(html)
+    assert results[0].title_en == "Black Torch"
+
+
+def test_imdb_rating_never_exceeds_ten() -> None:
+    from src.services.parsers import _parse_imdb
+
+    def _rating(raw: str | None) -> str | None:
+        node = HTMLParser(f'<div class="item imdb"><strong>{raw}</strong></div>')
+        return _parse_imdb(node)
+
+    assert _rating("100/10") is None  # malformed value must not render as "0/10"
+    assert _rating("100") is None
+    assert _rating("8/1017,204 رای") == "8/10"  # real rating glued to vote count
+    assert _rating("8.6/10") == "8.6/10"
+    assert _rating("10/10") == "10/10"
+    assert _rating("7") == "7/10"
+    assert _rating(None) is None
+
+
+def test_split_title_strips_download_prefixes() -> None:
+    from src.services.parsers import _split_title
+
+    assert _split_title("دانلود انیمه Black Torch - بلک تورچ") == ("Black Torch", "بلک تورچ")
+    assert _split_title("دانلود انیمیشن Spider-Man") == ("Spider-Man", None)
+    assert _split_title("دانلود مستند Cosmos") == ("Cosmos", None)

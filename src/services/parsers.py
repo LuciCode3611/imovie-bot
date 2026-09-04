@@ -2,8 +2,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from selectolax.parser import HTMLParser
-from selectolax.parser import Node
+from selectolax.parser import HTMLParser, Node
 
 from src.exceptions import ParseError
 from src.models import (
@@ -16,7 +15,17 @@ from src.models import (
     Season,
 )
 
-TITLE_PREFIXES = ("دانلود رایگان سریال ", "دانلود رایگان فیلم ", "دانلود سریال ", "دانلود انیمیشن ", "دانلود فیلم ")
+TITLE_PREFIXES = (
+    "دانلود رایگان سریال ",
+    "دانلود رایگان انیمه ",
+    "دانلود رایگان انیمیشن ",
+    "دانلود رایگان فیلم ",
+    "دانلود سریال ",
+    "دانلود انیمه ",
+    "دانلود انیمیشن ",
+    "دانلود فیلم ",
+    "دانلود مستند ",
+)
 
 SITE_ORIGIN = "https://zarfilm.com"
 DL_HREF_PREFIX = "https://dl"
@@ -99,7 +108,8 @@ def parse_search(html: HTMLParser) -> list[MovieSummary]:
             continue
         slug = link.attributes["href"].rstrip("/").rsplit("/", 1)[-1]
         poster_node = card.css_first("a.bgbackitem img")
-        title = _text(card, ".item-foot-title h3.movie-title")
+        raw_title = _text(card, ".item-foot-title h3.movie-title") or ""
+        title = _strip_title_prefix(raw_title)
         results.append(
             MovieSummary(
                 slug=slug,
@@ -108,7 +118,7 @@ def parse_search(html: HTMLParser) -> list[MovieSummary]:
                 year=_int_or_none(_text(card, ".score .year")),
                 poster_url=_absolute(poster_node.attributes.get("src")) if poster_node else None,
                 genres=[node.text(strip=True) for node in card.css(".genres_links h3 span") if node.text(strip=True)],
-                kind=_detect_kind(title or ""),
+                kind=_detect_kind(raw_title),
             )
         )
     return results
@@ -179,10 +189,19 @@ def _parse_imdb(html: HTMLParser) -> str | None:
     raw = _text(html, ".item.imdb strong") or _text(html, ".item.imdb")
     if not raw:
         return None
-    match = re.search(r"\d+(?:\.\d+)?", raw)
-    if match is None:
-        return None
-    return f"{match.group(0)}/10"
+    # the rating block renders as e.g. "8/1017,204 رای" (the /10 is glued to
+    # the vote count). Match the score before "/10", bounded so a malformed
+    # value such as "100/10" never matches the trailing "0/10".
+    match = re.search(r"(?<![\d.])(10(?:\.\d+)?|[0-9](?:\.\d+)?)/10", raw)
+    if match and float(match.group(1)) <= 10:
+        return f"{match.group(1)}/10"
+    # no denominator: only accept a bare standalone 0–10 number when there is
+    # no slash at all (so "100/10" can't match the bare "10")
+    if "/" not in raw:
+        match = re.search(r"(?<![\d.])(10|[0-9](?:\.\d+)?)(?![\d.])", raw)
+        if match is not None and float(match.group(1)) <= 10:
+            return f"{match.group(1)}/10"
+    return None
 
 
 def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
@@ -379,12 +398,16 @@ def _node(graph: dict, node_type: str) -> dict:
     return {}
 
 
-def _split_title(name: str) -> tuple[str, str | None]:
-    title = name
+def _strip_title_prefix(name: str) -> str:
+    title = name.strip()
     for prefix in TITLE_PREFIXES:
         if title.startswith(prefix):
-            title = title[len(prefix):]
-            break
+            return title[len(prefix):].strip()
+    return title
+
+
+def _split_title(name: str) -> tuple[str, str | None]:
+    title = _strip_title_prefix(name)
     if " - " in title:
         en, fa = title.rsplit(" - ", 1)
         return _strip_year(en), fa.strip()

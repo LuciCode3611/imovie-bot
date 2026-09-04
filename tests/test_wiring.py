@@ -104,6 +104,22 @@ async def test_start_clears_state_and_attaches_search_button() -> None:
     state.clear.assert_awaited_once()
 
 
+async def test_start_greets_user_by_name_without_dashboard_hint() -> None:
+    message = AsyncMock(spec=Message)
+    message.from_user = User(id=99, is_bot=False, first_name="رضا", last_name="احمدی")
+    message.answer = AsyncMock()
+    await common.start(message, AsyncMock(), cfg=_config())  # type: ignore[arg-type]
+    text = message.answer.await_args.args[0]
+    assert "رضا احمدی" in text
+    assert "/status" not in text  # the owner dashboard hint must never appear
+    assert "راهنمای سریع" in text
+    assert '<tg-emoji emoji-id="5440660757194744323">' in text
+    assert '<tg-emoji emoji-id="5325547803936572038">' in text
+    assert '<tg-emoji emoji-id="5467538555158943525">' in text
+    assert "<blockquote>" in text
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
+
 async def test_on_error_notfound_answers_specific_text() -> None:
     from src.exceptions import NotFoundError
 

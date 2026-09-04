@@ -544,3 +544,17 @@ async def test_series_episode_list_has_season_header(deps: dict[str, object]) ->
     text = message.edit_text.await_args.args[0]
     assert text.startswith("📂")
     assert "فصل اول" in text and "قسمت" in text
+
+
+async def test_trailer_button_announces_coming_soon(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_movie_details().summary, details=_movie_details())
+    key = deps["card_state"].create(entry)
+    cb = _cb(f"t:{key}", AsyncMock())
+    await card.send_trailer(cb, **deps)  # type: ignore[arg-type]
+    cb.answer.assert_awaited_once()
+    assert "به زودی اضافه میشه" in cb.answer.await_args.args[0]
+    assert cb.answer.await_args.kwargs.get("show_alert") is True
+    # trailer playback must stay disabled: no video / message sent, no resolve
+    cb.message.answer_video.assert_not_awaited()
+    cb.message.answer.assert_not_awaited()
+    deps["zarfilm"].resolve_trailer.assert_not_called()

@@ -279,47 +279,19 @@ async def flip_episode_page(callback: CallbackQuery, bot: Bot, card_state: Callb
     await callback.answer()
 
 
-TRAILER_SENDING_TEXT = "🎬 در حال آماده‌سازی تریلر…"
-TRAILER_FAILED_TEXT = "تریلر پخش‌شدنی پیدا نشد؛ ممکنه فقط برای کاربران ویژهٔ سایت باشه."
+TRAILER_SOON_TEXT = "به زودی اضافه میشه 🎬"
 
 
 @router.callback_query(F.data.startswith("t:"))
-async def send_trailer(
-    callback: CallbackQuery,
-    zarfilm: ZarfilmClient,
-    card_state: CallbackState,
-    **_: object,
-) -> None:
+async def send_trailer(callback: CallbackQuery, card_state: CallbackState, **_: object) -> None:
+    # trailer playback is disabled for now (the site's trailer page is behind a
+    # subscription); the button stays but just acknowledges with a "coming soon".
     key = (callback.data or "").removeprefix("t:")
     entry = card_state.get(key)
-    if entry is None or entry.details is None or not entry.details.trailer_url:
+    if entry is None:
         await callback.answer(EXPIRED_TEXT, show_alert=True)
         return
-    await callback.answer(TRAILER_SENDING_TEXT)
-    video_url = await zarfilm.resolve_trailer(entry.details.trailer_url)
-    if not video_url:
-        await callback.message.answer(TRAILER_FAILED_TEXT)
-        return
-    caption = f"🎬 {entry.details.summary.title_en}"
-    try:
-        if video_url.lower().endswith(".m3u8") or ".m3u8" in video_url:
-            # HLS isn't a Telegram file; share a direct stream link button
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-            await callback.message.answer(
-                caption,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="▶️ پخش تریلر", url=video_url)]]
-                ),
-            )
-        else:
-            await callback.message.answer_video(video=video_url, caption=caption, supports_streaming=True)
-    except TelegramBadRequest:
-        # Telegram couldn't fetch/stream the URL — fall back to a link
-        await callback.message.answer(
-            f"{caption}\nلینک مستقیم: {video_url}",
-            disable_web_page_preview=False,
-        )
+    await callback.answer(TRAILER_SOON_TEXT, show_alert=True)
 
 
 @router.callback_query(F.data.startswith("x:"))
