@@ -11,7 +11,10 @@ from src.repos.state import CardEntry
 from src.services.formatting import (
     apply_icon,
     card_text,
+    episode_caption,
+    episode_keyboard,
     episode_list_text,
+    episode_page_count,
     file_keyboard,
     quality_keyboard,
     results_keyboard,
@@ -69,10 +72,10 @@ def test_root_keyboard_no_dub_goes_straight_to_qualities() -> None:
     assert all(len(row) == 1 for row in kb.inline_keyboard)
 
 
-def test_root_keyboard_series_shows_seasons() -> None:
+def test_root_keyboard_series_shows_seasons_with_episode_counts() -> None:
     kb = root_keyboard(_details(series=True), "abc123")
     flat = [btn for row in kb.inline_keyboard for btn in row]
-    assert flat[0].text == "فصل اول" and flat[0].callback_data == "s:abc123:0"
+    assert flat[0].text == "فصل اول - 1 قسمت" and flat[0].callback_data == "s:abc123:0"
 
 
 def test_quality_keyboard_has_cancel() -> None:
@@ -159,14 +162,23 @@ def test_apply_icon_fallback_and_custom() -> None:
     assert fallback.icon_custom_emoji_id is None and fallback.text.startswith("🟢")
 
 
-def test_season_quality_keyboard_lists_packs_with_cancel() -> None:
-    kb = season_quality_keyboard([QualityPack(quality="1080p"), QualityPack(quality="720p")], "abc123")
+def test_season_quality_keyboard_lists_packs_and_back() -> None:
+    packs = [
+        QualityPack(quality="1080p - 2.2 GB"),
+        QualityPack(quality="1080p - 2.2 GB (دوبله)", dubbed=True),
+        QualityPack(quality="720p - 900 MB"),
+    ]
+    kb = season_quality_keyboard(packs, "abc123", season_index=0)
     rows = kb.inline_keyboard
-    assert [len(row) for row in rows] == [1, 1, 1]
+    assert [len(row) for row in rows] == [1, 1, 1, 1]
     flat = [btn for row in rows for btn in row]
-    assert flat[0].text == "1080p" and flat[0].callback_data == "q:abc123:s:0" and flat[0].style == "primary"
-    assert flat[1].text == "720p" and flat[1].callback_data == "q:abc123:s:1"
-    assert flat[-1].text == "انصراف" and flat[-1].style == "danger" and flat[-1].callback_data == "x:abc123"
+    # original qualities stay primary blue…
+    assert flat[0].text == "1080p - 2.2 GB" and flat[0].callback_data == "q:abc123:s:0" and flat[0].style == "primary"
+    # …but dubbed qualities are success green
+    assert flat[1].style == "success" and flat[1].callback_data == "q:abc123:s:1"
+    assert flat[2].text == "720p - 900 MB" and flat[2].callback_data == "q:abc123:s:2" and flat[2].style == "primary"
+    back = flat[-1]
+    assert back.text.startswith("🔙 بازگشت") and back.callback_data == "x:abc123"
 
 
 def test_keyboard_builders_apply_emoji_map_icons() -> None:
@@ -177,7 +189,7 @@ def test_keyboard_builders_apply_emoji_map_icons() -> None:
     assert kb.inline_keyboard[0][0].text == "دانلود با زبان اصلی" and kb.inline_keyboard[0][0].icon_custom_emoji_id == "111"
     assert kb.inline_keyboard[0][1].text == "دانلود با دوبله فارسی" and kb.inline_keyboard[0][1].icon_custom_emoji_id == "222"
     kb = root_keyboard(_details(series=True), "abc123", emoji_map=emoji_map)
-    assert kb.inline_keyboard[0][0].text == "فصل اول" and kb.inline_keyboard[0][0].icon_custom_emoji_id == "333"
+    assert kb.inline_keyboard[0][0].text == "فصل اول - 1 قسمت" and kb.inline_keyboard[0][0].icon_custom_emoji_id == "333"
     kb = results_keyboard([("aaaaaa", CardEntry(summary=_details().summary))], 0, 1, "skey001", emoji_map=emoji_map)
     assert kb.inline_keyboard[0][0].icon_custom_emoji_id == "555"
     kb = file_keyboard(_details().originals, "abc123", emoji_map=emoji_map)
@@ -193,6 +205,65 @@ def test_episode_list_messages_short_pack_is_single_message() -> None:
     messages = episode_list_messages(pack)
     assert len(messages) == 1
     assert "S01E01" in messages[0]
+
+
+def _pack_with_episodes(count: int, dubbed: bool = False) -> QualityPack:
+    return QualityPack(
+        quality="1080p - 2.2 GB" + (" (دوبله)" if dubbed else ""),
+        dubbed=dubbed,
+        episodes=[
+            EpisodeLink(label=f"S01E{i:03d}", url=f"https://dl.example.com/e{i:03d}.mkv", size="1.4GB")
+            for i in range(count)
+        ],
+    )
+
+
+def test_episode_keyboard_single_page_has_copy_all_and_back() -> None:
+    pack = QualityPack(
+        quality="1080p",
+        episodes=[EpisodeLink(label=f"S01E{i:02d}", url=f"https://d.co/e{i}.mkv") for i in range(5)],
+    )
+    kb = episode_keyboard(pack, "abc123", season_index=0)
+    rows = kb.inline_keyboard
+    # no nav row for a single page
+    assert all(not (len(row) > 1 and row[0].text == "◀") for row in rows)
+    flat = [btn for row in rows for btn in row]
+    copy = [btn for btn in flat if btn.copy_text is not None]
+    assert len(copy) == 1 and copy[0].text == "📋 کپی همه لینک‌ها"
+    copied = copy[0].copy_text.text.splitlines()
+    assert len(copied) == 5 and copied[0] == "https://d.co/e0.mkv"
+    assert all(len(btn.copy_text.text) <= 256 for btn in copy)
+    assert flat[-1].callback_data == "bs:abc123:0"
+    assert all(len((btn.callback_data or "").encode()) <= 64 for btn in flat if btn.callback_data)
+
+
+def test_episode_keyboard_long_pack_paginates_and_splits_copy() -> None:
+    pack = _pack_with_episodes(120)  # 30 per page → 4 pages
+    assert episode_page_count(pack) == 4
+    first = episode_keyboard(pack, "abc123", 0, page=0)
+    nav = first.inline_keyboard[0]
+    assert [btn.text for btn in nav] == ["1/4", "▶"]
+    assert nav[-1].callback_data == "e:abc123:0:1"
+    last = episode_keyboard(pack, "abc123", 0, page=3)
+    nav = last.inline_keyboard[0]
+    assert [btn.text for btn in nav] == ["◀", "4/4"]
+    assert nav[0].callback_data == "e:abc123:0:2"
+    # copy text split into multiple buttons, each under the 256-char cap
+    copy = [btn for row in last.inline_keyboard for btn in row if btn.copy_text is not None]
+    assert len(copy) > 1
+    assert all(len(btn.copy_text.text) <= 256 for btn in copy)
+    joined = "\n".join(btn.copy_text.text for btn in copy).splitlines()
+    assert len(joined) == 120
+
+
+def test_episode_caption_includes_season_quality_and_page() -> None:
+    pack = _pack_with_episodes(35)
+    season = Season(label="فصل ۲", qualities=[pack])
+    first = episode_caption(pack, season, page=0)
+    assert first.startswith("📂 فصل ۲ · 1080p - 2.2 GB — 35 قسمت  ·  صفحه 1/2")
+    assert "S01E000" in first and "S01E029" in first and "S01E034" not in first
+    second = episode_caption(pack, season, page=1)
+    assert "صفحه 2/2" in second and "S01E034" in second
 
 
 def test_episode_list_messages_chunks_long_packs() -> None:

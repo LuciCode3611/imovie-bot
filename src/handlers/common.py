@@ -57,6 +57,20 @@ async def edit_markup_safely(message: Message, reply_markup: Any) -> None:
             raise
 
 
+async def edit_card_content(message: Message, text: str, reply_markup: Any) -> None:
+    """Update a card in place: photo messages edit their caption, text
+    messages edit their body. Keeps the card as a single edited message so
+    drilling in and back never spawns extra messages."""
+    if message.content_type != "text":
+        try:
+            await message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode="HTML")
+            return
+        except TelegramBadRequest as exc:
+            if NOT_MODIFIED_MARKER in (exc.message or ""):
+                return
+    await edit_text_safely(message, text, reply_markup=reply_markup, parse_mode="HTML")
+
+
 def _requester_id(target: Message | CallbackQuery | None) -> int | None:
     user = getattr(target, "from_user", None)
     return user.id if user is not None and isinstance(user.id, int) else None

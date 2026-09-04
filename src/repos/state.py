@@ -10,6 +10,7 @@ class CardEntry:
     summary: MovieSummary
     details: MovieDetails | None = None
     selection: str = ""
+    pack: int | None = None
 
 
 @dataclass

@@ -25,6 +25,11 @@ class EpisodeLink(BaseModel):
 class QualityPack(BaseModel):
     quality: str
     episodes: list[EpisodeLink] = Field(default_factory=list)
+    dubbed: bool = False
+
+    @property
+    def episode_count(self) -> int:
+        return len(self.episodes)
 
 
 class Season(BaseModel):

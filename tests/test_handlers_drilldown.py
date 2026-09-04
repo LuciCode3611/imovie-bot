@@ -118,16 +118,30 @@ async def test_quality_choice_movie_edits_to_file_buttons(deps: dict[str, object
     assert kb.inline_keyboard[0][0].url == "https://dl.example.com/f.mkv"
 
 
-async def test_quality_choice_series_sends_episode_list_and_reverts(deps: dict[str, object]) -> None:
+async def test_quality_choice_series_edits_episode_list_into_card(deps: dict[str, object]) -> None:
     entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0")
     key = deps["card_state"].create(entry)
     message = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     message.edit_reply_markup = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    message.answer.assert_awaited_once()
-    assert "S01E01" in message.answer.await_args.args[0]
-    message.edit_reply_markup.assert_awaited_once()
-    assert entry.selection == ""
+    # episodes are rendered in the same message — never as new messages
+    message.answer.assert_not_awaited()
+    message.edit_text.assert_awaited_once()
+    text = message.edit_text.await_args.args[0]
+    assert "S01E01" in text and "فصل اول" in text and "قسمت" in text
+    kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[-1][0].callback_data == f"bs:{key}:0"
+    assert entry.selection == "s:0" and entry.pack == 0
+
+    # back returns to the season quality keyboard and restores the caption
+    message.edit_text = AsyncMock()
+    await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
+    back_text = message.edit_text.await_args.args[0]
+    assert back_text.startswith("📺") and "S01E01" not in back_text
+    back_kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert back_kb.inline_keyboard[0][0].callback_data == f"q:{key}:s:0"
 
 
 async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) -> None:
@@ -138,6 +152,7 @@ async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) 
     entry = CardEntry(summary=details.summary)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
+    message.content_type = "text"
     message.edit_text = AsyncMock()
     message.answer_photo = AsyncMock(
         side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="photo rejected")
@@ -146,27 +161,46 @@ async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) 
     text = message.edit_text.await_args.args[0]
     assert text.startswith("📺 سریال | Lanterns")
     root_kb = message.edit_text.await_args.kwargs["reply_markup"]
-    assert root_kb.inline_keyboard[0][0].text.endswith("فصل 1")
+    assert root_kb.inline_keyboard[0][0].text.startswith("📂 فصل 1 - ")
+    assert root_kb.inline_keyboard[0][0].text.endswith("قسمت")
 
     message.edit_reply_markup = AsyncMock()
     await card.choose_season(_cb(f"s:{key}:0", message), **deps)  # type: ignore[arg-type]
     season_kb = message.edit_reply_markup.await_args.kwargs["reply_markup"]
     assert season_kb.inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
 
-    message.answer = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    assert "S01E01" in message.answer.await_args.args[0]
+    # episodes are edited into the same card message, not sent as new ones
+    message.answer.assert_not_awaited()
+    episode_text = message.edit_text.await_args.args[0]
+    assert "S01E01" in episode_text
+    episode_kb = message.edit_text.await_args.kwargs["reply_markup"]
+    # copy-all button + back button present
+    flat = [btn for row in episode_kb.inline_keyboard for btn in row]
+    assert any("کپی لینک" in btn.text and btn.copy_text is not None for btn in flat)
+    assert flat[-1].text.startswith("🔙 بازگشت") and flat[-1].callback_data == f"bs:{key}:0"
+
+    # back returns to the season quality keyboard and restores the caption
+    message.edit_text = AsyncMock()
+    await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
+    back_kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert back_kb.inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
+    assert message.edit_text.await_args.args[0].startswith("📺 سریال | Lanterns")
 
 
 async def test_cancel_returns_to_root(deps: dict[str, object]) -> None:
-    entry = CardEntry(summary=_movie_details().summary, details=_movie_details(), selection="dub")
+    entry = CardEntry(summary=_movie_details().summary, details=_movie_details(), selection="dub", pack=1)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     await card.cancel(_cb(f"x:{key}", message), **deps)  # type: ignore[arg-type]
-    message.edit_reply_markup.assert_awaited_once()
-    assert entry.selection == ""
+    message.edit_text.assert_awaited_once()
+    kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == f"l:{key}:orig"
+    assert entry.selection == "" and entry.pack is None
 
 
 async def test_expired_key_alerts(deps: dict[str, object]) -> None:
@@ -291,7 +325,7 @@ async def test_series_quality_without_season_selection_alerts(deps: dict[str, ob
     message.answer.assert_not_awaited()
 
 
-async def test_long_episode_pack_is_chunked_into_multiple_messages(deps: dict[str, object]) -> None:
+async def test_long_episode_pack_is_paginated_in_the_same_message(deps: dict[str, object]) -> None:
     episodes = [
         EpisodeLink(label=f"S01E{i:03d}", url=f"https://dl.example.com/e{i:03d}.mkv", size="1.4GB")
         for i in range(300)
@@ -301,13 +335,31 @@ async def test_long_episode_pack_is_chunked_into_multiple_messages(deps: dict[st
     entry = CardEntry(summary=details.summary, details=details, selection="s:0")
     key = deps["card_state"].create(entry)
     message = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    assert message.answer.await_count > 1
-    for call in message.answer.await_args_list:
-        assert len(call.args[0]) <= 4096
-    answered = "".join(call.args[0] for call in message.answer.await_args_list)
-    assert "S01E001" in answered and "S01E299" in answered
+    # nothing sent as new messages — the card is edited in place
+    message.answer.assert_not_awaited()
+    first = message.edit_text.await_args.args[0]
+    assert "S01E000" in first and "S01E029" in first and "S01E299" not in first
+    kb = message.edit_text.await_args.kwargs["reply_markup"]
+    nav = kb.inline_keyboard[0]
+    assert nav[0].callback_data == f"e:{key}:0:i"  # page indicator on page 1
+    assert nav[-1].callback_data == f"e:{key}:0:1"  # next page
+
+    # flip to the last page and confirm all episodes remain reachable
+    from src.services.formatting import episode_page_count
+
+    last_page = episode_page_count(details.seasons[0].qualities[0]) - 1
+    await card.flip_episode_page(_cb(f"e:{key}:0:{last_page}", message), **deps)  # type: ignore[arg-type]
+    last_text = message.edit_text.await_args.args[0]
+    assert "S01E299" in last_text
+    # copy buttons exist on every page and stay within CopyTextButton's limit
+    for call in message.edit_text.await_args_list:
+        copy_btns = [
+            btn for row in call.kwargs["reply_markup"].inline_keyboard for btn in row if btn.copy_text is not None
+        ]
+        assert copy_btns and all(len(btn.copy_text.text) <= 256 for btn in copy_btns)
 
 
 async def test_edit_not_modified_is_swallowed(deps: dict[str, object]) -> None:
@@ -379,12 +431,40 @@ async def test_open_card_poster_failure_falls_back_to_text_card(deps: dict[str, 
     assert message.edit_text.await_args.kwargs["reply_markup"] is not None
 
 
+async def test_series_episode_flow_edits_photo_caption_not_new_messages(deps: dict[str, object]) -> None:
+    details = _series_details()
+    # a poster means the card is a photo message — episodes must edit its caption
+    details.summary.poster_url = "https://img.example.com/poster.jpg"
+    entry = CardEntry(summary=details.summary, details=details, selection="s:0")
+    key = deps["card_state"].create(entry)
+    message = AsyncMock()
+    message.content_type = "photo"
+    message.edit_caption = AsyncMock()
+    message.edit_text = AsyncMock()
+    await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
+    message.answer.assert_not_awaited()
+    message.edit_caption.assert_awaited_once()
+    message.edit_text.assert_not_awaited()
+    assert "S01E01" in message.edit_caption.await_args.kwargs["caption"]
+
+    # paging also edits the caption
+    await card.flip_episode_page(_cb(f"e:{key}:0:i", message), **deps)  # type: ignore[arg-type]
+    message.edit_caption.assert_awaited_once()  # indicator press: no edit
+
+    # back restores the card caption
+    await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
+    assert message.edit_caption.await_count == 2
+    back_caption = message.edit_caption.await_args.kwargs["caption"]
+    assert back_caption.startswith("📺") and "S01E01" not in back_caption
+
+
 async def test_series_episode_list_has_season_header(deps: dict[str, object]) -> None:
     entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0")
     key = deps["card_state"].create(entry)
     message = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    text = message.answer.await_args.args[0]
+    text = message.edit_text.await_args.args[0]
     assert text.startswith("📂")
     assert "فصل اول" in text and "قسمت" in text

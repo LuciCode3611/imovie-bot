@@ -201,11 +201,14 @@ def _add_quality_row(season: Season, row: Node, seen_urls: set[str]) -> None:
         links.append(link)
     if not links:
         return
+    dubbed = _is_dub_row(row)
     quality = _quality_pack_label(row, links[0])
     pack = next((item for item in season.qualities if item.quality == quality), None)
     if pack is None:
-        pack = QualityPack(quality=quality)
+        pack = QualityPack(quality=quality, dubbed=dubbed)
         season.qualities.append(pack)
+    elif dubbed:
+        pack.dubbed = True
     for link in links:
         if any(episode.url == link.url for episode in pack.episodes):
             continue
@@ -273,8 +276,10 @@ def _season_label(heading_text: str) -> str:
 def _add_episode(season: Season, link: DownloadLink) -> None:
     pack = next((q for q in season.qualities if q.quality == link.quality), None)
     if pack is None:
-        pack = QualityPack(quality=link.quality)
+        pack = QualityPack(quality=link.quality, dubbed=_is_dub(link))
         season.qualities.append(pack)
+    elif _is_dub(link):
+        pack.dubbed = True
     pack.episodes.append(EpisodeLink(label=_episode_label(link.url), url=link.url, size=link.size, host=link.host))
 
 
