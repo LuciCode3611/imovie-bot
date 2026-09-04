@@ -52,6 +52,8 @@ class MovieDetails(BaseModel):
     imdb: str | None = None
     plot: str | None = None
     countries: list[str] = Field(default_factory=list)
+    cast: list[str] = Field(default_factory=list)
+    runtime: str | None = None
     originals: list[DownloadLink] = Field(default_factory=list)
     dubs: list[DownloadLink] = Field(default_factory=list)
     seasons: list[Season] = Field(default_factory=list)

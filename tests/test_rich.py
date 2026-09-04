@@ -24,6 +24,8 @@ def _movie() -> MovieDetails:
         imdb="8.3/10",
         plot="پاول آترایدس به آراکیس بازمی‌گردد.",
         countries=["آمریکا"],
+        cast=["Timothée Chalamet", "Zendaya"],
+        runtime="166 دقیقه",
         originals=[DownloadLink(quality="1080p", url="https://dl.example.com/f.mkv")],
     )
 
@@ -32,6 +34,7 @@ def _series() -> MovieDetails:
     return MovieDetails(
         summary=MovieSummary(slug="s", title_en="Show", title_fa="سریال", kind=MediaKind.SERIES),
         countries=["آمریکا"],
+        cast=["Aaron Pierre"],
         imdb="8/10",
         plot="داستان سریال.",
         seasons=[
@@ -55,33 +58,56 @@ def _blocks(rich):
     return rich.model_dump(exclude_none=True)["blocks"]
 
 
+def _as_text(value) -> str:
+    if isinstance(value, str):
+        return value
+    parts = []
+    for item in value:
+        parts.append(item if isinstance(item, str) else item.get("alternative_text", ""))
+    return "".join(parts)
+
+
 def test_rich_card_is_rtl_and_contains_poster_table_pullquote() -> None:
     rich = rich_card_message(_movie())
     assert rich.is_rtl is True
     types = [b["type"] for b in _blocks(rich)]
     assert types[0] == "photo"
     assert "table" in types and "pullquote" in types
+    # the heading (فیلم/سریال text) was removed
+    assert "heading" not in types
 
 
 def test_rich_card_table_is_borderless_centered_with_metadata() -> None:
     rich = rich_card_message(_movie())
     table = next(b for b in _blocks(rich) if b["type"] == "table")
     assert table["is_bordered"] is False and table["is_compact"] is True
-    # every cell is center-aligned
     assert all(cell["align"] == "center" for row in table["cells"] for cell in row)
-    flat = [str(cell["text"]) for row in table["cells"] for cell in row]
-    assert "Dune: Part Two" in flat and "تل‌ماسه: بخش دوم" in flat
-    assert "محصول" in flat and "آمریکا" in flat
-    assert "ژانر" in flat and "8.3/10" in flat and "2024" in flat
-    # header row marks the two titles
-    assert table["cells"][0][0]["is_header"] is True
+    # title header row: English left (col0), Persian right (col1)
+    assert table["cells"][0][0]["text"] == "Dune: Part Two"
+    assert table["cells"][0][1]["text"] == "تل‌ماسه: بخش دوم"
+    # metadata rows are [value, label] so the label sits on the right in RTL
+    labels = [_as_text(row[1]["text"]) for row in table["cells"][1:]]
+    values = [_as_text(row[0]["text"]) for row in table["cells"][1:]]
+    joined_labels = " ".join(labels)
+    for label in ("امتیاز", "مدت زمان", "محصول", "ژانر", "ستارگان"):
+        assert label in joined_labels
+    assert "8.3/10" in values and "166 دقیقه" in values
+    assert "آمریکا" in values and "Timothée" in " ".join(values)
+    # label cells carry the per-role custom emoji ids
+    rating_label = table["cells"][1][1]["text"]
+    assert isinstance(rating_label, list)
+    assert any(
+        isinstance(x, dict) and x.get("custom_emoji_id") == "5438496463044752972" for x in rating_label
+    )
 
 
-def test_rich_card_series_has_seasons_row() -> None:
-    rich = rich_card_message(_series())
+def test_rich_card_hides_missing_runtime_row() -> None:
+    movie = _movie()
+    movie.runtime = None
+    rich = rich_card_message(movie)
     table = next(b for b in _blocks(rich) if b["type"] == "table")
-    flat = [str(cell["text"]) for row in table["cells"] for cell in row]
-    assert "فصل‌ها" in flat and "1 فصل" in flat
+    labels = " ".join(_as_text(row[1]["text"]) for row in table["cells"][1:])
+    assert "مدت زمان" not in labels
 
 
 def test_rich_episode_table_links_episodes() -> None:
@@ -91,6 +117,7 @@ def test_rich_episode_table_links_episodes() -> None:
     table = next(b for b in _blocks(rich) if b["type"] == "table")
     # header + 2 episodes
     assert len(table["cells"]) == 3
-    # download cell of the first episode is a URL rich text pointing at the link
-    link_cell = table["cells"][1][2]["text"]
+    # RTL: episode label on the right (col2), download link on the left (col0)
+    assert table["cells"][1][2]["text"] == "S01E01"
+    link_cell = table["cells"][1][0]["text"]
     assert isinstance(link_cell, dict) and link_cell["url"] == "https://dl.example.com/e1.mkv"

@@ -134,9 +134,42 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
         imdb=_parse_imdb(html),
         plot=_text(html, "div.plot"),
         countries=_parse_countries(html),
+        cast=_parse_people(html, ("ستارگان", "بازیگران")),
+        runtime=_parse_runtime(html),
     )
     _parse_genres(html, summary)
     return _parse_download_box(html, details)
+
+
+def _stars_block(html: HTMLParser, labels: tuple[str, ...]) -> list[str]:
+    for block in html.css(".stars"):
+        label = block.css_first(".label span")
+        if label is not None and any(word in label.text() for word in labels):
+            values = [
+                (anchor.attributes.get("title") or anchor.text(strip=True)).strip()
+                for anchor in block.css(".list .item a")
+            ]
+            return [v for v in values if v]
+    return []
+
+
+def _parse_people(html: HTMLParser, labels: tuple[str, ...]) -> list[str]:
+    return _stars_block(html, labels)
+
+
+def _parse_runtime(html: HTMLParser) -> str | None:
+    """Runtime (مدت زمان) — only when the page exposes an explicit
+    minute/hour value; the site does not always provide one, so this is best
+    effort and returns None (the row is then omitted) when absent."""
+    text = html.text(separator=" ")
+    match = re.search(r"(\d{1,3})\s*دقیقه", text)
+    if match:
+        return f"{match.group(1)} دقیقه"
+    match = re.search(r"(\d{1,2})\s*ساعت(?:\s*و\s*(\d{1,2})\s*دقیقه)?", text)
+    if match:
+        hours, minutes = match.group(1), match.group(2)
+        return f"{hours} ساعت" + (f" و {minutes} دقیقه" if minutes else "")
+    return None
 
 
 def _parse_imdb(html: HTMLParser) -> str | None:
@@ -161,15 +194,7 @@ def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
 
 
 def _parse_countries(html: HTMLParser) -> list[str]:
-    for block in html.css(".stars"):
-        label = block.css_first(".label span")
-        if label is not None and "کشور" in label.text():
-            countries = [
-                (anchor.attributes.get("title") or anchor.text(strip=True)).strip()
-                for anchor in block.css(".list .item a")
-            ]
-            return [c for c in countries if c]
-    return []
+    return _stars_block(html, ("کشور", "محصول"))
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:

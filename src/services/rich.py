@@ -3,7 +3,7 @@
 The card ("box") for a movie/series is rendered as a single rich message:
 poster block + a centered, borderless metadata table + a centered
 pull-quote with the story. Episode packs reuse the same structure with a
-compact bordered table of tappable episode links.
+compact table of tappable episode links.
 
 On clients/API versions that predate rich messages, callers fall back to the
 classic photo card (see src/handlers/card.py).
@@ -19,14 +19,24 @@ from aiogram.types import (
     InputRichMessage,
     RichBlockTableCell,
     RichText,
+    RichTextCustomEmoji,
     RichTextUrl,
 )
 
 from src.models import MovieDetails, QualityPack, Season
-from src.services.formatting import KIND_WORDS, kind_badge
 
 # rich messages cap at 32,768 chars / 500 blocks / 20 table columns — one
-# episode table per pack fits comfortably, so episodes are NOT paginated here.
+# episode table per pack fits comfortably.
+
+# role -> Telegram custom-emoji id used for the metadata label cells
+LABEL_EMOJI: dict[str, tuple[str, str]] = {
+    # role:        (custom_emoji_id, fallback unicode alternative)
+    "imdb": ("5438496463044752972", "⭐"),
+    "country": ("5424972470023104089", "🌍"),
+    "runtime": ("5458603043203327669", "⏱"),
+    "genre": ("5397782960512444700", "🎭"),
+    "cast": ("5217822164362739968", "🎬"),
+}
 
 
 def _cell(text: RichText, *, header: bool = False) -> RichBlockTableCell:
@@ -37,33 +47,36 @@ def _text_cell(value: str, *, header: bool = False) -> RichBlockTableCell:
     return _cell(value, header=header)
 
 
+def _label_cell(role: str, text: str) -> RichBlockTableCell:
+    """A label cell with a custom emoji prepended (the id the user supplied
+    per metadata role); falls back to a plain label when the role has none."""
+    emoji = LABEL_EMOJI.get(role)
+    if emoji is None:
+        return _cell(text)
+    custom_id, fallback = emoji
+    return _cell([RichTextCustomEmoji(custom_emoji_id=custom_id, alternative_text=fallback), f" {text}"])
+
+
 def _info_table(details: MovieDetails) -> InputRichBlockTable:
     summary = details.summary
+    fa_title = summary.title_fa or summary.title_en
+    # In RTL the first logical column renders on the RIGHT. Titles keep
+    # [English, Persian] so Persian (the LTR-first column) lands left and
+    # English right; metadata rows are [value, label] so the label is right.
     rows: list[list[RichBlockTableCell]] = [
-        [_text_cell(summary.title_en, header=True), _text_cell(summary.title_fa or "—", header=True)]
+        [_text_cell(summary.title_en, header=True), _text_cell(fa_title, header=True)]
     ]
-    if summary.year:
-        rows.append([_text_cell("سال"), _text_cell(str(summary.year))])
-    if details.countries:
-        rows.append([_text_cell("محصول"), _text_cell("، ".join(details.countries))])
-    runtime = _runtime(details)
-    if runtime:
-        rows.append([_text_cell("مدت زمان"), _text_cell(runtime)])
-    if summary.genres:
-        rows.append([_text_cell("ژانر"), _text_cell("، ".join(summary.genres[:5]))])
-    if details.imdb:
-        rows.append([_text_cell("⭐ IMDb"), _text_cell(details.imdb)])
-    if details.is_series and details.seasons:
-        rows.append(
-            [_text_cell("فصل‌ها"), _text_cell(f"{len(details.seasons)} فصل")]
-        )
+
+    def add(role: str, label: str, value: str | None) -> None:
+        if value:
+            rows.append([_text_cell(value), _label_cell(role, label)])
+
+    add("imdb", "امتیاز", details.imdb)
+    add("runtime", "مدت زمان", details.runtime)
+    add("country", "محصول", "، ".join(details.countries) if details.countries else None)
+    add("genre", "ژانر", "، ".join(summary.genres[:5]) if summary.genres else None)
+    add("cast", "ستارگان", "، ".join(details.cast[:5]) if details.cast else None)
     return InputRichBlockTable(is_bordered=False, is_striped=False, is_compact=True, cells=rows)
-
-
-def _runtime(_details: MovieDetails) -> str | None:
-    # the source page does not currently expose runtime in the parsed markup;
-    # reserved so the row appears as soon as the parser provides it
-    return None
 
 
 def _story_block(details: MovieDetails) -> InputRichBlockPullQuotation | None:
@@ -77,8 +90,6 @@ def rich_card_message(details: MovieDetails) -> InputRichMessage:
     blocks: list = []
     if details.summary.poster_url:
         blocks.append(InputRichBlockPhoto(photo=InputMediaPhoto(media=details.summary.poster_url)))
-    heading = f"{kind_badge(details.summary.kind)} {KIND_WORDS.get(details.summary.kind, '')}".strip()
-    blocks.append(InputRichBlockSectionHeading(text=heading, size=2))
     blocks.append(_info_table(details))
     story = _story_block(details)
     if story is not None:
@@ -89,17 +100,12 @@ def rich_card_message(details: MovieDetails) -> InputRichMessage:
 
 def _episode_table(pack: QualityPack) -> InputRichBlockTable:
     cells: list[list[RichBlockTableCell]] = [
-        [_text_cell("قسمت", header=True), _text_cell("حجم", header=True), _text_cell("دانلود", header=True)]
+        [_text_cell("دانلود", header=True), _text_cell("حجم", header=True), _text_cell("قسمت", header=True)]
     ]
     for episode in pack.episodes:
         link = RichTextUrl(text="🔗 دریافت", url=episode.url)
-        cells.append(
-            [
-                _text_cell(episode.label),
-                _text_cell(episode.size or "—"),
-                _cell(link),
-            ]
-        )
+        # RTL: episode label on the right, size middle, download on the left
+        cells.append([_cell(link), _text_cell(episode.size or "—"), _text_cell(episode.label)])
     return InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells)
 
 
