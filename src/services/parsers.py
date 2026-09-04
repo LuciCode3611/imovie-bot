@@ -2,8 +2,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from selectolax.parser import HTMLParser
-from selectolax.parser import Node
+from selectolax.parser import HTMLParser, Node
 
 from src.exceptions import ParseError
 from src.models import (
@@ -14,9 +13,20 @@ from src.models import (
     MovieSummary,
     QualityPack,
     Season,
+    SeriesStatus,
 )
 
-TITLE_PREFIXES = ("دانلود رایگان سریال ", "دانلود رایگان فیلم ", "دانلود سریال ", "دانلود انیمیشن ", "دانلود فیلم ")
+TITLE_PREFIXES = (
+    "دانلود رایگان سریال ",
+    "دانلود رایگان انیمه ",
+    "دانلود رایگان انیمیشن ",
+    "دانلود رایگان فیلم ",
+    "دانلود سریال ",
+    "دانلود انیمه ",
+    "دانلود انیمیشن ",
+    "دانلود فیلم ",
+    "دانلود مستند ",
+)
 
 SITE_ORIGIN = "https://zarfilm.com"
 DL_HREF_PREFIX = "https://dl"
@@ -24,6 +34,11 @@ SEASON_HEADING_TAGS = ("h2", "h3", "h4")
 SEASON_HEADING_WORD = "فصل"
 SEASON_LABEL_PATTERN = re.compile(r"فصل[\s\u200c]+\S+")
 QUALITY_PATTERN = re.compile(r"\d{3,4}p", re.IGNORECASE)
+QUALITY_BADGE_SELECTOR = ".quality_name"
+SIZE_VALUE_SELECTOR = ".size_meta .value, .size_item_meta .value_meta_qu"
+ROW_CONTAINER_CLASSES = ("item_row_dl", "item_quality_n_row")
+MEDIA_EXTENSIONS = (".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm", ".mka", ".mp3", ".aac", ".srt", ".zip")
+UNKNOWN_QUALITY = "نسخه اصلی"
 EPISODE_PATTERN = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(گی[گک]ابایت|مگابایت|کیلوبایت|[GMK]i?B)", re.IGNORECASE)
 SIZE_UNITS = {"گیگابایت": "GB", "گیکابایت": "GB", "مگابایت": "MB", "کیلوبایت": "KB"}
@@ -43,7 +58,11 @@ def filter_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
 
 
 def parse_cookies(raw: str) -> dict[str, str]:
-    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header; domain fields are discarded and all cookies are kept because the jar is per-bot and zarfilm ignores irrelevant entries."""
+    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header.
+
+    Domain fields are discarded and all cookies are kept: the jar is per-bot and
+    zarfilm ignores irrelevant entries.
+    """
     text = raw.lstrip()
     if text.startswith(("[", "{")):
         try:
@@ -99,7 +118,8 @@ def parse_search(html: HTMLParser) -> list[MovieSummary]:
             continue
         slug = link.attributes["href"].rstrip("/").rsplit("/", 1)[-1]
         poster_node = card.css_first("a.bgbackitem img")
-        title = _text(card, ".item-foot-title h3.movie-title")
+        raw_title = _text(card, ".item-foot-title h3.movie-title") or ""
+        title = _strip_title_prefix(raw_title)
         results.append(
             MovieSummary(
                 slug=slug,
@@ -108,7 +128,7 @@ def parse_search(html: HTMLParser) -> list[MovieSummary]:
                 year=_int_or_none(_text(card, ".score .year")),
                 poster_url=_absolute(poster_node.attributes.get("src")) if poster_node else None,
                 genres=[node.text(strip=True) for node in card.css(".genres_links h3 span") if node.text(strip=True)],
-                kind=_detect_kind(title or ""),
+                kind=_detect_kind(raw_title),
             )
         )
     return results
@@ -131,10 +151,132 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
     )
     details = MovieDetails(
         summary=summary,
-        imdb=_text(html, ".item.imdb strong"),
+        imdb=_parse_imdb(html),
         plot=_text(html, "div.plot"),
+        countries=_parse_countries(html),
+        cast=_parse_people(html, ("ستارگان", "بازیگران")),
+        runtime=_parse_runtime(html),
+        trailer_url=_parse_trailer(html),
+        series_status=_parse_series_status(html) if summary.kind is MediaKind.SERIES else None,
     )
+    _parse_genres(html, summary)
     return _parse_download_box(html, details)
+
+
+def _stars_block(html: HTMLParser, labels: tuple[str, ...]) -> list[str]:
+    for block in html.css(".stars"):
+        label = block.css_first(".label span")
+        if label is not None and any(word in label.text() for word in labels):
+            values = [
+                (anchor.attributes.get("title") or anchor.text(strip=True)).strip()
+                for anchor in block.css(".list .item a")
+            ]
+            return [v for v in values if v]
+    return []
+
+
+def _parse_people(html: HTMLParser, labels: tuple[str, ...]) -> list[str]:
+    return _stars_block(html, labels)
+
+
+def _parse_runtime(html: HTMLParser) -> str | None:
+    """Runtime (مدت زمان) — only when the page exposes an explicit
+    minute/hour value; the site does not always provide one, so this is best
+    effort and returns None (the row is then omitted) when absent."""
+    text = html.text(separator=" ")
+    match = re.search(r"(\d{1,3})\s*دقیقه", text)
+    if match:
+        return f"{match.group(1)} دقیقه"
+    match = re.search(r"(\d{1,2})\s*ساعت(?:\s*و\s*(\d{1,2})\s*دقیقه)?", text)
+    if match:
+        hours, minutes = match.group(1), match.group(2)
+        return f"{hours} ساعت" + (f" و {minutes} دقیقه" if minutes else "")
+    return None
+
+
+def _parse_imdb(html: HTMLParser) -> str | None:
+    """The rating block renders as e.g. ``8/1017,204 رای`` — keep only the
+    ``X/Y`` rating, drop the vote count."""
+    raw = _text(html, ".item.imdb strong") or _text(html, ".item.imdb")
+    if not raw:
+        return None
+    # the rating block renders as e.g. "8/1017,204 رای" (the /10 is glued to
+    # the vote count). Match the score before "/10", bounded so a malformed
+    # value such as "100/10" never matches the trailing "0/10".
+    match = re.search(r"(?<![\d.])(10(?:\.\d+)?|[0-9](?:\.\d+)?)/10", raw)
+    if match and float(match.group(1)) <= 10:
+        return f"{match.group(1)}/10"
+    # no denominator: only accept a bare standalone 0–10 number when there is
+    # no slash at all (so "100/10" can't match the bare "10")
+    if "/" not in raw:
+        match = re.search(r"(?<![\d.])(10|[0-9](?:\.\d+)?)(?![\d.])", raw)
+        if match is not None and float(match.group(1)) <= 10:
+            return f"{match.group(1)}/10"
+    return None
+
+
+def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
+    if summary.genres:
+        return
+    holder = html.css_first(".genres_holder_single")
+    if holder is None:
+        return
+    summary.genres = [a.text(strip=True) for a in holder.css("a") if a.text(strip=True)]
+
+
+def _parse_countries(html: HTMLParser) -> list[str]:
+    return _stars_block(html, ("کشور", "محصول"))
+
+
+_ENDED_MARKERS = ("تکمیل شده", "تمام شده", "پایان سریال", "سریال به پایان")
+# any season/series marker that means the show is still being produced
+_ONGOING_MARKERS = (
+    "در حال پخش",
+    "درحال پخش",
+    "تمدید",
+    "پایان فصل",
+    "اضافه شد",
+    "به زودی",
+    "قسمت جدید",
+)
+
+
+def _parse_series_status(html: HTMLParser) -> SeriesStatus | None:
+    """Map zarfilm's per-season status labels (`.label_status` inside each
+    season row) to one of در حال پخش / تمام شده. The latest season's label
+    decides: if it's a 'completed season' marker the show is ended, anything
+    that says still airing/renewed/new episodes means ongoing."""
+    labels = [
+        node.text(strip=True)
+        for node in html.css(".row_season_n_dl .label_status, .single_dlbox .label_status")
+        if node.text(strip=True)
+    ]
+    if not labels:
+        # fallback: some anime templates render the season status elsewhere
+        labels = [
+            node.text(strip=True)
+            for node in html.css(".label_status")
+            if node.text(strip=True)
+        ]
+    if not labels:
+        return None
+    # the last season is the authoritative one
+    latest = labels[-1]
+    if any(marker in latest for marker in _ENDED_MARKERS):
+        return SeriesStatus.ENDED
+    # anything else (airing, renewed, "episode N added", season finale, …)
+    # means the show is still going
+    return SeriesStatus.ONGOING
+
+
+def _parse_trailer(html: HTMLParser) -> str | None:
+    anchor = html.css_first("a.trailer_btn") or html.css_first("a[href*='/play/'][href*='trailer']")
+    if anchor is None:
+        return None
+    href = anchor.attributes.get("href")
+    if not href or not href.startswith("http"):
+        return None
+    return href
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:
@@ -201,11 +343,14 @@ def _add_quality_row(season: Season, row: Node, seen_urls: set[str]) -> None:
         links.append(link)
     if not links:
         return
+    dubbed = _is_dub_row(row)
     quality = _quality_pack_label(row, links[0])
     pack = next((item for item in season.qualities if item.quality == quality), None)
     if pack is None:
-        pack = QualityPack(quality=quality)
+        pack = QualityPack(quality=quality, dubbed=dubbed)
         season.qualities.append(pack)
+    elif dubbed:
+        pack.dubbed = True
     for link in links:
         if any(episode.url == link.url for episode in pack.episodes):
             continue
@@ -234,26 +379,66 @@ def _download_link(anchor: Node) -> DownloadLink | None:
     href = anchor.attributes.get("href") or ""
     if not href.startswith(DL_HREF_PREFIX):
         return None
-    quality_match = QUALITY_PATTERN.search(urlparse(href).path) or QUALITY_PATTERN.search(anchor.text())
-    if quality_match is None:
+    path = urlparse(href).path
+    if not path.lower().endswith(MEDIA_EXTENSIONS):
         return None
     return DownloadLink(
-        quality=quality_match.group(0).lower(),
+        quality=_link_quality(anchor, path),
         url=href,
         size=_nearby_size(anchor),
         host=urlparse(href).netloc or None,
     )
 
 
-def _nearby_size(anchor: Node) -> str | None:
+def _link_quality(anchor: Node, path: str) -> str:
+    """Resolve a quality label, preferring the row's own badge over the filename.
+
+    Raw releases (no dub, no hardsub) often carry no resolution token in the
+    filename, so the URL alone is not a reliable source.
+    """
+    if badge := _row_quality_badge(anchor):
+        if match := QUALITY_PATTERN.search(badge):
+            return match.group(0).lower()
+        return badge
+    for text in (path, anchor.text()):
+        if match := QUALITY_PATTERN.search(text):
+            return match.group(0).lower()
+    return UNKNOWN_QUALITY
+
+
+def _row_quality_badge(anchor: Node) -> str | None:
     node = anchor.parent
     for _ in range(4):
         if node is None or node.tag == "body":
             return None
-        if size_match := SIZE_PATTERN.search(node.text()):
-            return _normalize_size(size_match.group(1), size_match.group(2))
+        if badge := _text(node, QUALITY_BADGE_SELECTOR):
+            return badge
         node = node.parent
     return None
+
+
+def _nearby_size(anchor: Node) -> str | None:
+    """Read the size from the anchor's own row.
+
+    The walk stops at the row container so a row that lists no size cannot
+    borrow the one belonging to a neighbouring row.
+    """
+    node = anchor.parent
+    for _ in range(4):
+        if node is None or node.tag == "body":
+            return None
+        size = _text(node, SIZE_VALUE_SELECTOR)
+        if size and (size_match := SIZE_PATTERN.search(size)):
+            return _normalize_size(size_match.group(1), size_match.group(2))
+        if _is_row_container(node):
+            break
+        node = node.parent
+    return None
+
+
+def _is_row_container(node: Node) -> bool:
+    classes = node.attributes.get("class") or ""
+    return any(marker in classes for marker in ROW_CONTAINER_CLASSES)
 
 
 def _normalize_size(value: str, unit: str) -> str:
@@ -273,8 +458,10 @@ def _season_label(heading_text: str) -> str:
 def _add_episode(season: Season, link: DownloadLink) -> None:
     pack = next((q for q in season.qualities if q.quality == link.quality), None)
     if pack is None:
-        pack = QualityPack(quality=link.quality)
+        pack = QualityPack(quality=link.quality, dubbed=_is_dub(link))
         season.qualities.append(pack)
+    elif _is_dub(link):
+        pack.dubbed = True
     pack.episodes.append(EpisodeLink(label=_episode_label(link.url), url=link.url, size=link.size, host=link.host))
 
 
@@ -303,12 +490,16 @@ def _node(graph: dict, node_type: str) -> dict:
     return {}
 
 
-def _split_title(name: str) -> tuple[str, str | None]:
-    title = name
+def _strip_title_prefix(name: str) -> str:
+    title = name.strip()
     for prefix in TITLE_PREFIXES:
         if title.startswith(prefix):
-            title = title[len(prefix):]
-            break
+            return title[len(prefix):].strip()
+    return title
+
+
+def _split_title(name: str) -> tuple[str, str | None]:
+    title = _strip_title_prefix(name)
     if " - " in title:
         en, fa = title.rsplit(" - ", 1)
         return _strip_year(en), fa.strip()
@@ -320,7 +511,11 @@ def _strip_year(value: str) -> str:
 
 
 def _detect_kind(title: str) -> MediaKind:
-    return MediaKind.SERIES if "سریال" in title or "مجموعه" in title else MediaKind.MOVIE
+    # anime series ("دانلود انیمه ...") are TV shows too — only the explicit
+    # "انیمیشن" (animated movie) wording stays a movie
+    if any(word in title for word in ("سریال", "مجموعه", "انیمه")):
+        return MediaKind.SERIES
+    return MediaKind.MOVIE
 
 
 def _year_from_slug(slug: str) -> int | None:
@@ -328,7 +523,7 @@ def _year_from_slug(slug: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _text(scope: HTMLParser, selector: str) -> str | None:
+def _text(scope: HTMLParser | Node, selector: str) -> str | None:
     node = scope.css_first(selector)
     return node.text(strip=True) if node else None
 

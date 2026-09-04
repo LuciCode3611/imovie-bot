@@ -16,3 +16,9 @@ _probe_*.html
 
 # Local files (not part of the project)
 result.json
+
+# SQLite database
+data/
+*.db
+*.db-wal
+*.db-shm

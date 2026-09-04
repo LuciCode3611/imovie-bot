@@ -10,6 +10,10 @@ class CardEntry:
     summary: MovieSummary
     details: MovieDetails | None = None
     selection: str = ""
+    pack: int | None = None
+    rich: bool = False  # True once the card was rendered as a Bot API 10.1 rich message
+    ep_page: int = 0  # classic episode view: visible page (5/page)
+    copy_chunk: int = 0  # which "copy all links" 256-char chunk is shown
 
 
 @dataclass

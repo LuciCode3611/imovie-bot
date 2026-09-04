@@ -19,6 +19,7 @@ class Config(BaseSettings):
     allowed_user_ids: Annotated[list[int] | None, NoDecode] = None
     owner_id: int | None = None
     session_path: Path = Path("session.json")
+    db_path: Path = Path("data/bot.db")
     search_ttl: int = 3600
     page_ttl: int = 21600
     state_ttl: int = 3600

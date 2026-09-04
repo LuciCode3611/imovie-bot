@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -32,6 +33,8 @@ class ZarfilmClient:
         )
         self._lock = asyncio.Lock()
         self._logged_in = False
+        self.started_at = time.monotonic()
+        self.stats: dict[str, int] = {"requests": 0, "searches": 0, "movies": 0}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -42,6 +45,38 @@ class ZarfilmClient:
     def set_cookies(self, cookies: Mapping[str, str]) -> None:
         for name, value in cookies.items():
             self._client.cookies.set(name, value)
+
+    def uptime_seconds(self) -> int:
+        return int(time.monotonic() - self.started_at)
+
+    def session_cookies(self) -> dict[str, str]:
+        return {name: value for name, value in self._client.cookies.items()}
+
+    def session_ttl_seconds(self) -> int | None:
+        """Remaining lifetime of the WordPress login cookie, in seconds.
+
+        A ``wordpress_logged_in_*`` cookie's value embeds the login expiry as
+        the second pipe/percent7C-separated field (a unix timestamp)."""
+        for name, value in self.session_cookies().items():
+            if not name.startswith("wordpress_logged_in"):
+                continue
+            for sep in ("|", "%7C"):
+                parts = value.split(sep)
+                if len(parts) >= 2 and parts[1].isdigit():
+                    return max(0, int(parts[1]) - int(time.time()))
+        return None
+
+    async def session_valid(self) -> bool:
+        """Live check: the home page shows the account menu only when logged
+        in. Returns False on any transport error or when no session exists."""
+        if not self._restore_session() and not self._logged_in:
+            return False
+        try:
+            response = await self._get("/")
+        except httpx.HTTPError:
+            return False
+        logged_out = self.LOGGED_OUT_MARK in response.text
+        return not logged_out
 
     def persist_session(self) -> None:
         jar = {name: value for name, value in self._client.cookies.items()}
@@ -86,6 +121,7 @@ class ZarfilmClient:
     async def _search_once(self, query: str) -> list[MovieSummary]:
         response = await self._get("/", params={"s": query})
         response.raise_for_status()
+        self.stats["searches"] += 1
         return parse_search(HTMLParser(response.text))
 
     async def movie(self, slug: str) -> MovieDetails:
@@ -93,6 +129,7 @@ class ZarfilmClient:
         if response.status_code == 404:
             raise NotFoundError(slug)
         response.raise_for_status()
+        self.stats["movies"] += 1
         return parse_movie(HTMLParser(response.text), slug)
 
     async def _get_logged_in(self, path: str) -> httpx.Response:

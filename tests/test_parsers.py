@@ -28,9 +28,10 @@ def test_movie_metadata_from_public_page() -> None:
     assert details.summary.title_fa == "میان‌ستاره‌ای"
     assert details.summary.year == 2014
     assert details.summary.kind is MediaKind.MOVIE
-    assert details.imdb == "8.6"
+    assert details.imdb == "8.6/10"
     assert details.plot and details.plot.startswith("در حالی که")
     assert details.summary.poster_url and "wp-content" in details.summary.poster_url
+    assert details.summary.genres and "علمی تخیلی" in details.summary.genres
 
 
 def test_parse_error_on_garbage() -> None:
@@ -70,3 +71,89 @@ def test_search_parses_movie_cards_as_movie_kind() -> None:
     html = HTMLParser(_cards_html(_card("movie", "Silo", "silo-2023")))
     results = parse_search(html)
     assert results[0].kind is MediaKind.MOVIE
+
+
+def test_search_titles_have_persian_prefixes_stripped() -> None:
+    html = HTMLParser(_cards_html(_card("movie", "دانلود انیمه Black Torch", "black-torch-2025")))
+    results = parse_search(html)
+    assert results[0].title_en == "Black Torch"
+
+
+def test_imdb_rating_never_exceeds_ten() -> None:
+    from src.services.parsers import _parse_imdb
+
+    def _rating(raw: str | None) -> str | None:
+        node = HTMLParser(f'<div class="item imdb"><strong>{raw}</strong></div>')
+        return _parse_imdb(node)
+
+    assert _rating("100/10") is None  # malformed value must not render as "0/10"
+    assert _rating("100") is None
+    assert _rating("8/1017,204 رای") == "8/10"  # real rating glued to vote count
+    assert _rating("8.6/10") == "8.6/10"
+    assert _rating("10/10") == "10/10"
+    assert _rating("7") == "7/10"
+    assert _rating(None) is None
+
+
+def test_split_title_strips_download_prefixes() -> None:
+    from src.services.parsers import _split_title
+
+    assert _split_title("دانلود انیمه Black Torch - بلک تورچ") == ("Black Torch", "بلک تورچ")
+    assert _split_title("دانلود انیمیشن Spider-Man") == ("Spider-Man", None)
+    assert _split_title("دانلود مستند Cosmos") == ("Cosmos", None)
+
+
+def _season_row_html(status: str) -> str:
+    return (
+        '<div class="single_dlbox"><div class="row_season_n_dl">'
+        '<div class="title_series_row_n">'
+        '<div class="season_name"><span>فصل 1</span></div>'
+        f'<span class="label_status">{status}</span>'
+        "</div></div></div>"
+    )
+
+
+def test_series_status_detects_ended_and_ongoing() -> None:
+    from src.models import SeriesStatus
+    from src.services.parsers import _parse_series_status
+
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("فصل 1<br>تکمیل شده")))
+        is SeriesStatus.ENDED
+    )
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("فصل 2<br>پایان فصل دوم")))
+        is SeriesStatus.ONGOING
+    )
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("قسمت 3 اضافه شد")))
+        is SeriesStatus.ONGOING
+    )
+    multi = HTMLParser(
+        '<div class="single_dlbox">'
+        + _season_row_html("تکمیل شده")
+        + _season_row_html("تمدید شد")
+        + "</div>"
+    )
+    assert _parse_series_status(multi) is SeriesStatus.ONGOING
+    assert _parse_series_status(HTMLParser("<html></html>")) is None
+
+
+def test_anime_series_detected_as_series_with_status() -> None:
+    from src.services.parsers import _detect_kind
+    from src.models import MediaKind, SeriesStatus
+    from src.services.parsers import _parse_series_status
+
+    # anime ("دانلود انیمه ...") is a TV series, not a movie
+    assert _detect_kind("دانلود انیمه Black Torch") is MediaKind.SERIES
+    # explicit animated movies stay movies
+    assert _detect_kind("دانلود انیمیشن Spider-Man") is MediaKind.MOVIE
+    # black-torch-shaped page: one season, "episode N added" label
+    html = HTMLParser(
+        '<div class="single_dlbox"><div class="row_season_n_dl">'
+        '<div class="title_series_row_n">'
+        '<div class="season_name"><span>فصل 1</span></div>'
+        '<span class="label_status">قسمت 9 اضافه شد</span>'
+        "</div></div></div>"
+    )
+    assert _parse_series_status(html) is SeriesStatus.ONGOING

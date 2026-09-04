@@ -2,14 +2,27 @@ from html import escape
 from typing import Any
 
 from aiogram.enums.button_style import ButtonStyle
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.models import DownloadLink, EpisodeLink, MediaKind, MovieDetails, QualityPack
+from src.models import (
+    DownloadLink,
+    EpisodeLink,
+    MediaKind,
+    MovieDetails,
+    QualityPack,
+    Season,
+)
 from src.repos.state import CardEntry
 
 PLOT_LIMIT = 300
 TELEGRAM_MESSAGE_LIMIT = 4096
 EPISODE_CHUNK_LIMIT = 3800
+# media captions cap at 1024 visible characters (URL entities don't count) —
+# stay below it, and keep the per-page entity count well under Telegram's limit
+EPISODE_CAPTION_LIMIT = 950
+EPISODES_PER_PAGE = 30
+# Telegram CopyTextButton accepts at most 256 characters
+COPY_TEXT_LIMIT = 256
 
 FALLBACK_ICONS: dict[str, str] = {
     "original": "🔵",
@@ -44,6 +57,8 @@ def card_text(details: MovieDetails) -> str:
     meta_parts: list[str] = []
     if details.imdb:
         meta_parts.append(f"⭐ {escape(details.imdb)}")
+    if details.series_status:
+        meta_parts.append(f"📺 {escape(details.series_status.label)}")
     if summary.genres:
         meta_parts.append("🎭 " + escape("، ".join(summary.genres[:3])))
     lines = [head]
@@ -75,12 +90,15 @@ def results_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def welcome_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
-        ]
-    )
+def welcome_keyboard(is_owner: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
+    ]
+    if is_owner:
+        rows.append(
+            [InlineKeyboardButton(text="🛠 داشبورد", callback_data="dash:open", style=ButtonStyle.PRIMARY)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _result_button(key: str, entry: CardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
@@ -99,9 +117,12 @@ def root_keyboard(
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if details.is_series:
+    # an anime film is tagged as a series by title alone and carries no
+    # seasons: fall through to the movie layout so its links stay reachable
+    if details.is_series and details.seasons:
         for idx, season in enumerate(details.seasons):
-            rows.append([_icon_button(season.label, "season", emoji_map, callback_data=f"s:{key}:{idx}", style=ButtonStyle.PRIMARY)])
+            label = f"{season.label} - {_season_episode_count(season)} قسمت"
+            rows.append([_icon_button(label, "season", emoji_map, callback_data=f"s:{key}:{idx}", style=ButtonStyle.PRIMARY)])
     elif details.has_dub:
         rows.append([
             _icon_button("دانلود با زبان اصلی", "original", emoji_map, callback_data=f"l:{key}:orig", style=ButtonStyle.PRIMARY),
@@ -109,6 +130,10 @@ def root_keyboard(
         ])
     else:
         rows = _quality_rows(details.originals, key, "orig", emoji_map)
+    if details.trailer_url:
+        rows.append([
+            InlineKeyboardButton(text="🎬 مشاهده تریلر", callback_data=f"t:{key}", style=ButtonStyle.PRIMARY)
+        ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -126,13 +151,24 @@ def quality_keyboard(
 def season_quality_keyboard(
     packs: list[QualityPack],
     key: str,
+    season_index: int | None = None,
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
     rows = [
-        [_icon_button(pack.quality, "quality", emoji_map, callback_data=f"q:{key}:s:{idx}", style=ButtonStyle.PRIMARY)]
+        [
+            _icon_button(
+                pack.quality,
+                "quality",
+                emoji_map,
+                callback_data=f"q:{key}:s:{idx}",
+                style=ButtonStyle.SUCCESS if pack.dubbed else ButtonStyle.PRIMARY,
+            )
+        ]
         for idx, pack in enumerate(packs)
     ]
-    rows.append([_cancel_button(key)])
+    # back to the seasons list when this keyboard belongs to a known season,
+    # otherwise just cancel to the root (defensive / legacy callers)
+    rows.append([_back_to_root_button(key) if season_index is not None else _cancel_button(key)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -172,6 +208,139 @@ def _file_button(link: DownloadLink) -> InlineKeyboardButton:
 
 def _cancel_button(key: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text="انصراف", callback_data=f"x:{key}", style=ButtonStyle.DANGER)
+
+
+def _back_to_season_button(key: str, season_index: int) -> InlineKeyboardButton:
+    # the back-to-season handler (bs:) restores the card caption and shows
+    # the season's quality buttons
+    return InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"bs:{key}:{season_index}")
+
+
+def _back_to_root_button(key: str) -> InlineKeyboardButton:
+    # the cancel handler (x:) resets state and renders the root keyboard
+    return InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"x:{key}")
+
+
+def _season_episode_count(season: Season) -> int:
+    return max((pack.episode_count for pack in season.qualities), default=0)
+
+
+def episode_page_count(pack: QualityPack) -> int:
+    return max(1, (len(pack.episodes) + EPISODES_PER_PAGE - 1) // EPISODES_PER_PAGE)
+
+
+def episode_visible_line(episode: EpisodeLink) -> str:
+    """The visible (non-entity) part of an episode caption line — that is what
+    counts against Telegram's 1024-char caption limit, href entities do not."""
+    line = episode.label
+    if episode.size:
+        line += f" — {episode.size}"
+    return line
+
+
+def episode_caption(pack: QualityPack, season: Season, page: int = 0) -> str:
+    """Caption shown on the poster card while an episode pack is open."""
+    header = f"📂 {escape(season.label)} · {escape(pack.quality)} — {pack.episode_count} قسمت"
+    pages = episode_page_count(pack)
+    if pages > 1:
+        header += f"  ·  صفحه {page + 1}/{pages}"
+    body: list[str] = []
+    length = 0
+    for episode in pack.episodes[page * EPISODES_PER_PAGE : (page + 1) * EPISODES_PER_PAGE]:
+        visible = episode_visible_line(episode)
+        if body and length + len(visible) + 1 > EPISODE_CAPTION_LIMIT:
+            break
+        body.append(episode_line(episode))
+        length += len(visible) + 1
+    return "\n".join([header, "", *body])
+
+
+def episode_keyboard(
+    pack: QualityPack,
+    key: str,
+    season_index: int,
+    page: int = 0,
+    copy_chunk: int = 0,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    pages = episode_page_count(pack)
+    if pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀", callback_data=f"e:{key}:{season_index}:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data=f"e:{key}:{season_index}:i"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton(text="▶", callback_data=f"e:{key}:{season_index}:{page + 1}"))
+        rows.append(nav)
+    rows.extend(_copy_rows(pack, key, season_index, copy_chunk))
+    rows.append([_back_to_season_button(key, season_index)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def copy_chunk_count(pack: QualityPack) -> int:
+    """How many 256-char chunks the pack's episode links split into."""
+    return max(1, len(_copy_chunks([episode.url for episode in pack.episodes])))
+
+
+def _copy_rows(pack: QualityPack, key: str, season_index: int, chunk_index: int = 0) -> list[list[InlineKeyboardButton]]:
+    """Exactly ONE «کپی همه لینک‌ها» CopyTextButton (Telegram caps the copied
+    text at 256 chars). When the links don't fit in one chunk the button copies
+    the current chunk and a «بقیه لینک‌ها ▶» switch-button steps to the next
+    chunk, so every link stays reachable without ever showing a second copy
+    button."""
+    chunks = _copy_chunks([episode.url for episode in pack.episodes])
+    if not chunks:
+        return []
+    chunk_index = max(0, min(chunk_index, len(chunks) - 1))
+    return _copy_chunk_rows(chunks, chunk_index, key, season_index)
+
+
+def _copy_chunk_rows(
+    chunks: list[str],
+    chunk_index: int,
+    key: str,
+    season_index: int,
+) -> list[list[InlineKeyboardButton]]:
+    total = len(chunks)
+    label = "📋 کپی همه لینک‌ها" if total == 1 else f"📋 کپی همه لینک‌ها ({chunk_index + 1}/{total})"
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=label, copy_text=CopyTextButton(text=chunks[chunk_index]))]
+    ]
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if chunk_index > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="◀ لینک‌های قبلی",
+                    callback_data=f"cc:{key}:{season_index}:{chunk_index - 1}",
+                )
+            )
+        if chunk_index < total - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="بقیه لینک‌ها ▶",
+                    callback_data=f"cc:{key}:{season_index}:{chunk_index + 1}",
+                )
+            )
+        rows.append(nav)
+    return rows
+
+
+def _copy_chunks(urls: list[str], limit: int = COPY_TEXT_LIMIT) -> list[str]:
+    """Split URLs into newline-joined chunks that fit CopyTextButton's limit."""
+    chunks: list[str] = []
+    current = ""
+    for url in urls:
+        if not current:
+            current = url
+        elif len(current) + 1 + len(url) <= limit:
+            current = f"{current}\n{url}"
+        else:
+            chunks.append(current)
+            current = url
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _icon_button(

@@ -1,3 +1,5 @@
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -11,7 +13,7 @@ from src.handlers import search
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 
 
 def _results() -> list[MovieSummary]:
@@ -22,6 +24,7 @@ def _message(text: str, user_id: int = 42) -> Message:
     message = AsyncMock(spec=Message)
     message.text = text
     message.from_user = User(id=user_id, is_bot=False, first_name="t")
+    message.chat = SimpleNamespace(id=user_id)
     message.answer = AsyncMock(return_value=AsyncMock())
     return message
 
@@ -29,17 +32,31 @@ def _message(text: str, user_id: int = 42) -> Message:
 def _state() -> FSMContext:
     state = AsyncMock(spec=FSMContext)
     state.clear = AsyncMock()
+    store: dict = {}
+
+    async def get_data() -> dict:
+        return dict(store)
+
+    async def update_data(**kwargs: object) -> None:
+        store.update(kwargs)
+
+    state.get_data = get_data
+    state.update_data = update_data
     return state
 
 
 @pytest.fixture
-def deps() -> dict[str, Any]:
+def deps(tmp_path: Path) -> dict[str, Any]:
+    from src.repos.db import Database
+
     return {
+        "bot": AsyncMock(),
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
         "cfg": Config(_env_file=None, bot_token="1:abc"),
         "state": _state(),
+        "db": Database(tmp_path / "test.db"),
     }
 
 
@@ -48,7 +65,9 @@ async def test_search_replies_with_result_buttons(deps: dict[str, Any]) -> None:
     message = _message("interstellar")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
     status = message.answer.return_value
-    assert message.answer.await_args.args[0] == search.SEARCHING_TEXT
+    sent = message.answer.await_args
+    assert search.SEARCHING_TEXT in sent.args[0] and search.SEARCHING_EMOJI_ID in sent.args[0]
+    assert sent.kwargs.get("parse_mode") == "HTML"
     status.edit_text.assert_awaited_once()
     kb = status.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].callback_data.startswith("m:")
@@ -65,13 +84,17 @@ async def test_cached_search_skips_loading_message(deps: dict[str, Any]) -> None
     message.answer.return_value.edit_text.assert_not_awaited()
 
 
-async def test_search_threads_custom_emoji_map(tmp_path) -> None:
+async def test_search_threads_custom_emoji_map(tmp_path: Path) -> None:
+    from src.repos.db import Database
+
     deps_local: dict[str, Any] = {
+        "bot": AsyncMock(),
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(search=AsyncMock(return_value=_results())),
         "cfg": Config(_env_file=None, bot_token="1:abc", emoji={"result": "555"}),
         "state": _state(),
+        "db": Database(tmp_path / "test.db"),
     }
     message = _message("interstellar")
     await search.handle_search(message, **deps_local)  # type: ignore[arg-type]
@@ -84,7 +107,16 @@ async def test_search_no_results_message(deps: dict[str, Any]) -> None:
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
     status = message.answer.return_value
-    status.edit_text.assert_awaited_once_with(search.NO_RESULTS_TEXT)
+    # the status message becomes the no-results notice with a request button
+    assert status.edit_text.await_count == 1
+    text = status.edit_text.await_args.args[0]
+    assert search.NO_RESULTS_TEXT in text
+    kb = status.edit_text.await_args.kwargs["reply_markup"]
+    flat = [btn for row in kb.inline_keyboard for btn in row]
+    assert any((btn.callback_data or "") == "req:go" and "ثبت درخواست" in btn.text for btn in flat)
+    # the failed query is stashed for the one-tap request
+    stored = await deps["state"].get_data()
+    assert stored.get("req_query") == "qqqqqq"
 
 
 async def test_search_uses_cache_before_site(deps: dict[str, Any]) -> None:
@@ -106,8 +138,11 @@ async def test_state_cleared_after_no_results(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=[])
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
-    message.answer.assert_awaited_once()
+    # the searching status is edited in place (no extra messages)
+    assert message.answer.await_count == 1
     deps["state"].clear.assert_awaited_once()
+    # nothing recorded until the user taps «ثبت درخواست»
+    assert deps["db"].count_open_requests() == 0
 
 
 def _callback(data: str) -> CallbackQuery:
@@ -140,7 +175,7 @@ async def test_begin_search_swallows_not_modified() -> None:
 
 async def test_free_text_hint_carries_search_button() -> None:
     message = _message("سلام")
-    await search.search_hint(message)  # type: ignore[arg-type]
+    await search.search_hint(message, cfg=Config(_env_file=None, bot_token="1:abc"))  # type: ignore[arg-type]
     message.answer.assert_awaited_once()
     kwargs = message.answer.await_args.kwargs
     assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "srch:go"
