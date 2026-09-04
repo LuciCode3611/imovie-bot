@@ -11,7 +11,7 @@ from aiogram.utils.chat_action import ChatActionSender
 from src.handlers.card import EXPIRED_TEXT
 from src.handlers.common import edit_text_safely
 from src.models import MovieSummary
-from src.models.config import Config
+from src.models.config import Config, resolve_owner
 from src.repos.cache import TTLCache
 from src.repos.state import CallbackState, CardEntry, SearchEntry
 from src.services.formatting import results_keyboard, welcome_keyboard
@@ -146,5 +146,6 @@ async def change_page(
 
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
-async def search_hint(message: Message) -> None:
-    await message.answer(HINT_TEXT, reply_markup=welcome_keyboard())
+async def search_hint(message: Message, cfg: Config) -> None:
+    is_owner = message.from_user is not None and message.from_user.id == resolve_owner(cfg)
+    await message.answer(HINT_TEXT, reply_markup=welcome_keyboard(is_owner=is_owner))

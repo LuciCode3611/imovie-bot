@@ -10,7 +10,6 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from src.exceptions import AuthError, NotFoundError, ZarfilmError
 from src.models.config import Config, resolve_owner
 from src.services.formatting import welcome_keyboard
-
 router = Router(name="common")
 
 WELCOME_TEXT = (
@@ -33,15 +32,22 @@ _OWNER_ALERT_COOLDOWN = 600.0
 _owner_alert_state = {"last": float("-inf")}
 
 
+def _is_owner_message(message: Message, cfg: Config | None) -> bool:
+    if cfg is None or message.from_user is None:
+        return False
+    owner = resolve_owner(cfg)
+    return owner is not None and message.from_user.id == owner
+
+
 @router.message(F.text.startswith("/start"))
-async def start(message: Message, state: FSMContext) -> None:
+async def start(message: Message, state: FSMContext, cfg: Config) -> None:
     await state.clear()
-    await message.answer(WELCOME_TEXT, reply_markup=welcome_keyboard())
+    await message.answer(WELCOME_TEXT, reply_markup=welcome_keyboard(is_owner=_is_owner_message(message, cfg)))
 
 
 @router.message(F.text.startswith("/help"))
-async def help_(message: Message) -> None:
-    await message.answer(WELCOME_TEXT, reply_markup=welcome_keyboard())
+async def help_(message: Message, cfg: Config) -> None:
+    await message.answer(WELCOME_TEXT, reply_markup=welcome_keyboard(is_owner=_is_owner_message(message, cfg)))
 
 
 async def edit_text_safely(message: Message, text: str, **kwargs: Any) -> None:

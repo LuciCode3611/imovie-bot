@@ -88,12 +88,15 @@ def results_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def welcome_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
-        ]
-    )
+def welcome_keyboard(is_owner: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
+    ]
+    if is_owner:
+        rows.append(
+            [InlineKeyboardButton(text="🛠 داشبورد", callback_data="dash:open", style=ButtonStyle.PRIMARY)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _result_button(key: str, entry: CardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
@@ -124,7 +127,9 @@ def root_keyboard(
     else:
         rows = _quality_rows(details.originals, key, "orig", emoji_map)
     if details.trailer_url:
-        rows.append([InlineKeyboardButton(text="🎬 مشاهده تریلر", url=details.trailer_url)])
+        rows.append([
+            InlineKeyboardButton(text="🎬 مشاهده تریلر", callback_data=f"t:{key}", style=ButtonStyle.PRIMARY)
+        ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

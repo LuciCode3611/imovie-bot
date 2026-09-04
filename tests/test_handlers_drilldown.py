@@ -325,7 +325,10 @@ async def test_receive_cookie_without_session_cookie_rejects(
     fsm = AsyncMock()
     stub = _StubZarfilm(cfg.session_path)
     await admin.receive_cookie(message, fsm, cfg, stub)  # type: ignore[arg-type]
-    message.answer.assert_awaited_once_with(admin.NO_SESSION_COOKIE_TEXT)
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.args[0] == admin.NO_SESSION_COOKIE_TEXT
+    # a cancel/retry keyboard is attached and the FSM stays in waiting state
+    assert message.answer.await_args.kwargs.get("reply_markup") is not None
     assert not cfg.session_path.exists()
     fsm.clear.assert_not_awaited()
 

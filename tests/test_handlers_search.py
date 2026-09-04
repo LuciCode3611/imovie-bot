@@ -146,7 +146,7 @@ async def test_begin_search_swallows_not_modified() -> None:
 
 async def test_free_text_hint_carries_search_button() -> None:
     message = _message("سلام")
-    await search.search_hint(message)  # type: ignore[arg-type]
+    await search.search_hint(message, cfg=Config(_env_file=None, bot_token="1:abc"))  # type: ignore[arg-type]
     message.answer.assert_awaited_once()
     kwargs = message.answer.await_args.kwargs
     assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "srch:go"

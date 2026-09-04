@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiogram.dispatcher.dispatcher import Dispatcher
-from aiogram.types import Message
+from aiogram.types import Message, User
 
 from src.exceptions import ZarfilmError
 from src.handlers import card, common
@@ -94,9 +94,10 @@ async def test_expired_open_card_key_alerts_with_real_state() -> None:
 
 async def test_start_clears_state_and_attaches_search_button() -> None:
     message = AsyncMock(spec=Message)
+    message.from_user = User(id=42, is_bot=False, first_name="owner")
     message.answer = AsyncMock()
     state = AsyncMock()
-    await common.start(message, state)  # type: ignore[arg-type]
+    await common.start(message, state, cfg=_config())  # type: ignore[arg-type]
     message.answer.assert_awaited_once()
     kwargs = message.answer.await_args.kwargs
     assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "srch:go"

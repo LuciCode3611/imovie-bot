@@ -153,6 +153,13 @@ def test_welcome_keyboard_single_search_button() -> None:
     assert btn.icon_custom_emoji_id is None
 
 
+def test_welcome_keyboard_shows_dashboard_only_for_owner() -> None:
+    assert not any(b.callback_data == "dash:open" for row in welcome_keyboard().inline_keyboard for b in row)
+    kb = welcome_keyboard(is_owner=True)
+    flat = [b for row in kb.inline_keyboard for b in row]
+    assert any(b.callback_data == "dash:open" and "داشبورد" in b.text for b in flat)
+
+
 def test_apply_icon_fallback_and_custom() -> None:
     from aiogram.types import InlineKeyboardButton
 

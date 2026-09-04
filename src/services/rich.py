@@ -121,10 +121,10 @@ def rich_episode_message(
 
 
 def rich_dashboard_message(stats: dict) -> InputRichMessage:
-    """Owner dashboard: bot status, session/cookie validity and TTL.
-
-    ``stats`` keys: online (bool), session_present (bool), session_valid
-    (bool|None — None = not checked), ttl (int|None seconds)."""
+    """Owner dashboard rich message. ``stats`` keys:
+    online, session_present, session_valid (bool|None), ttl (seconds|None),
+    uptime (seconds|None), users, searches, movies, open_mode (bool),
+    proxy (str|None)."""
     online = "🟢 آنلاین" if stats.get("online") else "🔴 آفلاین"
     if not stats.get("session_present"):
         cookie = "🔴 بدون کوکی"
@@ -134,25 +134,25 @@ def rich_dashboard_message(stats: dict) -> InputRichMessage:
         cookie = "🔴 منقضی شده"
     else:
         cookie = "🟡 نامشخص"
-    ttl_text = _persian_ttl(stats.get("ttl")) or "—"
 
-    def s(value: str, *, header: bool = False) -> RichBlockTableCell:
+    def s(value: str, header: bool = False) -> RichBlockTableCell:
         return _cell(value, header=header)
 
-    table = InputRichBlockTable(
-        is_bordered=False,
-        is_compact=True,
-        cells=[
-            [s("وضعیت ربات", header=True), s(online)],
-            [s("کوکی نشست", header=True), s(cookie)],
-            [s("اعتبار باقی‌مانده", header=True), s(ttl_text)],
-        ],
-    )
-    blocks = [
-        InputRichBlockSectionHeading(text="🛠 داشبورد مدیریت ربات", size=2),
-        table,
+    rows = [
+        [s("وضعیت ربات", header=True), s(online)],
+        [s("کوکی نشست", header=True), s(cookie)],
+        [s("اعتبار باقی‌مانده", header=True), s(_persian_ttl(stats.get("ttl")) or "—")],
+        [s("مدت روشن بودن", header=True), s(_persian_ttl(stats.get("uptime")) or "—")],
+        [s("دسترسی کاربران", header=True), s("🔓 باز برای همه" if stats.get("open_mode") else "🔒 فقط لیست مجاز")],
+        [s("پروکسی", header=True), s("🟢 فعال" if stats.get("proxy") else "—")],
+        [s("جستجوها", header=True), s(f"🔍 {stats.get('searches', 0)}")],
+        [s("صفحه‌های باز شده", header=True), s(f"🎬 {stats.get('movies', 0)}")],
     ]
-    return InputRichMessage(blocks=blocks, is_rtl=True)
+    table = InputRichBlockTable(is_bordered=False, is_compact=True, cells=rows)
+    return InputRichMessage(
+        blocks=[InputRichBlockSectionHeading(text="🛠 داشبورد مدیریت ربات", size=2), table],
+        is_rtl=True,
+    )
 
 
 def _persian_ttl(seconds: int | None) -> str | None:
