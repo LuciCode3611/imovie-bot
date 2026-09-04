@@ -60,16 +60,15 @@ def _label_cell(role: str, text: str) -> RichBlockTableCell:
 def _info_table(details: MovieDetails) -> InputRichBlockTable:
     summary = details.summary
     fa_title = summary.title_fa or summary.title_en
-    # In RTL the first logical column renders on the RIGHT. Titles keep
-    # [English, Persian] so Persian (the LTR-first column) lands left and
-    # English right; metadata rows are [value, label] so the label is right.
+    # Label-first cell order — this is the layout that renders RTL (label on
+    # the right) on Telegram mobile clients.
     rows: list[list[RichBlockTableCell]] = [
         [_text_cell(summary.title_en, header=True), _text_cell(fa_title, header=True)]
     ]
 
     def add(role: str, label: str, value: str | None) -> None:
         if value:
-            rows.append([_text_cell(value), _label_cell(role, label)])
+            rows.append([_label_cell(role, label), _text_cell(value)])
 
     add("imdb", "امتیاز", details.imdb)
     add("runtime", "مدت زمان", details.runtime)
@@ -100,12 +99,11 @@ def rich_card_message(details: MovieDetails) -> InputRichMessage:
 
 def _episode_table(pack: QualityPack) -> InputRichBlockTable:
     cells: list[list[RichBlockTableCell]] = [
-        [_text_cell("دانلود", header=True), _text_cell("حجم", header=True), _text_cell("قسمت", header=True)]
+        [_text_cell("قسمت", header=True), _text_cell("حجم", header=True), _text_cell("دانلود", header=True)]
     ]
     for episode in pack.episodes:
         link = RichTextUrl(text="🔗 دریافت", url=episode.url)
-        # RTL: episode label on the right, size middle, download on the left
-        cells.append([_cell(link), _text_cell(episode.size or "—"), _text_cell(episode.label)])
+        cells.append([_text_cell(episode.label), _text_cell(episode.size or "—"), _cell(link)])
     return InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells)
 
 

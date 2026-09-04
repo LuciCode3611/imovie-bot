@@ -82,19 +82,20 @@ def test_rich_card_table_is_borderless_centered_with_metadata() -> None:
     table = next(b for b in _blocks(rich) if b["type"] == "table")
     assert table["is_bordered"] is False and table["is_compact"] is True
     assert all(cell["align"] == "center" for row in table["cells"] for cell in row)
-    # title header row: English left (col0), Persian right (col1)
+    # title header row
     assert table["cells"][0][0]["text"] == "Dune: Part Two"
     assert table["cells"][0][1]["text"] == "تل‌ماسه: بخش دوم"
-    # metadata rows are [value, label] so the label sits on the right in RTL
-    labels = [_as_text(row[1]["text"]) for row in table["cells"][1:]]
-    values = [_as_text(row[0]["text"]) for row in table["cells"][1:]]
+    # metadata rows are label-first (label on col0) — the layout that renders
+    # RTL on Telegram mobile
+    labels = [_as_text(row[0]["text"]) for row in table["cells"][1:]]
+    values = [_as_text(row[1]["text"]) for row in table["cells"][1:]]
     joined_labels = " ".join(labels)
     for label in ("امتیاز", "مدت زمان", "محصول", "ژانر", "ستارگان"):
         assert label in joined_labels
     assert "8.3/10" in values and "166 دقیقه" in values
     assert "آمریکا" in values and "Timothée" in " ".join(values)
     # label cells carry the per-role custom emoji ids
-    rating_label = table["cells"][1][1]["text"]
+    rating_label = table["cells"][1][0]["text"]
     assert isinstance(rating_label, list)
     assert any(
         isinstance(x, dict) and x.get("custom_emoji_id") == "5438496463044752972" for x in rating_label
@@ -106,7 +107,7 @@ def test_rich_card_hides_missing_runtime_row() -> None:
     movie.runtime = None
     rich = rich_card_message(movie)
     table = next(b for b in _blocks(rich) if b["type"] == "table")
-    labels = " ".join(_as_text(row[1]["text"]) for row in table["cells"][1:])
+    labels = " ".join(_as_text(row[0]["text"]) for row in table["cells"][1:])
     assert "مدت زمان" not in labels
 
 
@@ -117,7 +118,7 @@ def test_rich_episode_table_links_episodes() -> None:
     table = next(b for b in _blocks(rich) if b["type"] == "table")
     # header + 2 episodes
     assert len(table["cells"]) == 3
-    # RTL: episode label on the right (col2), download link on the left (col0)
-    assert table["cells"][1][2]["text"] == "S01E01"
-    link_cell = table["cells"][1][0]["text"]
+    # label-first order: episode (col0), size (col1), download link (col2)
+    assert table["cells"][1][0]["text"] == "S01E01"
+    link_cell = table["cells"][1][2]["text"]
     assert isinstance(link_cell, dict) and link_cell["url"] == "https://dl.example.com/e1.mkv"

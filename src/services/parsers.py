@@ -136,6 +136,7 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
         countries=_parse_countries(html),
         cast=_parse_people(html, ("ستارگان", "بازیگران")),
         runtime=_parse_runtime(html),
+        trailer_url=_parse_trailer(html),
     )
     _parse_genres(html, summary)
     return _parse_download_box(html, details)
@@ -195,6 +196,16 @@ def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
 
 def _parse_countries(html: HTMLParser) -> list[str]:
     return _stars_block(html, ("کشور", "محصول"))
+
+
+def _parse_trailer(html: HTMLParser) -> str | None:
+    anchor = html.css_first("a.trailer_btn") or html.css_first("a[href*='/play/'][href*='trailer']")
+    if anchor is None:
+        return None
+    href = anchor.attributes.get("href")
+    if not href or not href.startswith("http"):
+        return None
+    return href
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:

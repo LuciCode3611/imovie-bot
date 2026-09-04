@@ -123,6 +123,8 @@ def root_keyboard(
         ])
     else:
         rows = _quality_rows(details.originals, key, "orig", emoji_map)
+    if details.trailer_url:
+        rows.append([InlineKeyboardButton(text="🎬 مشاهده تریلر", url=details.trailer_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
