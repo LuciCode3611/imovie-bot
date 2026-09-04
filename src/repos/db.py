@@ -8,6 +8,7 @@ serialised through a Lock — handlers may call these directly.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -41,10 +42,21 @@ class Database:
     """Thin synchronous SQLite repository; safe for the polling loop."""
 
     def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path = Path(path).expanduser()
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"cannot create database directory {self._path.parent}: {exc}") from exc
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        try:
+            self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        except sqlite3.OperationalError as exc:
+            parent = self._path.parent
+            raise RuntimeError(
+                f"cannot open database at {self._path.absolute()} "
+                f"(directory exists: {parent.exists()}, writable: {os.access(parent, os.W_OK)}) — "
+                f"set DB_PATH to a writable location such as a mounted volume: {exc}"
+            ) from exc
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_schema()
