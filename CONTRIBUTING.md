@@ -1,12 +1,12 @@
-# Zarfilm Telegram Bot (movie_bot)
+# Contributing
 
 Personal Telegram bot for searching zarfilm.com and retrieving direct download
 links, restricted to a small allowlist (owner + friends). Zarfilm has no API;
 the bot scrapes its WordPress pages over HTTPS with a logged-in session.
 
-## Architecture & Structure
+## Architecture
 
-Pragmatic layered architecture, exactly this layout:
+Layered, exactly this layout:
 
 ```
 src/
@@ -18,14 +18,14 @@ src/
     main.py         # entrypoint: build dispatcher, register routers, long polling
 ```
 
-## Code Quality & Style Rules
+## Code style
 
-- Type safety: explicit Python type hints and Pydantic models across every layer.
-- Minimal comments: self-documenting code. No obvious or conversational comments.
-- Pragmatic architecture: apply patterns (repository, factory) only where actually needed. No over-engineering.
-- Production standards: handle edge cases, timeouts, and failures cleanly. Hand-crafted quality — no generic AI boilerplate, no preachy inline docs.
+- Explicit type hints and Pydantic models across every layer.
+- Comments explain *why*, never *what*. Self-documenting code by default.
+- Apply patterns (repository, factory) only where they earn their keep.
+- Handle edge cases, timeouts, and failures explicitly.
 
-## Domain Rules
+## Domain rules
 
 - Direct links only: the bot sends zarfilm download URLs; it never re-uploads files to Telegram.
 - Cookie-only sessions: the zarfilm login form is captcha-protected, so credentials are never used or stored and captchas are never solved. The only session supply is the `/login` admin command (owner pastes a browser cookie; the message is deleted immediately after reading it). The client restores the cookie from `session.json` and, on expiry, asks the owner to re-run `/login`.
@@ -33,9 +33,9 @@ src/
 - Scraping etiquette: in-memory TTL cache for searches and pages; space out requests; one search in flight per user.
 - Allowlist-only: Telegram user IDs not in `ALLOWED_USER_IDS` are ignored with a terse rejection.
 
-## UI & UX Formatting Specs
+## UI & formatting
 
-(Proposed defaults — being reviewed against the design doc. Persian-first, RTL.)
+Persian-first, RTL.
 
 - Bot text formatting: compact single message per movie, RTL Persian labels, HTML parse mode:
 
@@ -69,8 +69,11 @@ src/
   📄 در آینده‌ای نزدیک، زمین دیگر قابل کشت نیست و…
   ```
 
-## Development Workflow Rules
+## Workflow
 
-- Do NOT generate the entire project at once. Work incrementally, one file or module at a time.
-- Before writing code for any component, outline the proposed implementation for that component, get explicit confirmation, then proceed.
-- Implementation follows the approved design doc in `docs/superpowers/specs/` and its derived implementation plan. First implementation step: propose the structure and schemas for `src/models/` and `src/exceptions.py`.
+- Work in small, reviewable increments — one module at a time, not whole-project drops.
+- Sketch the shape of a component (types, function signatures) before implementing it.
+- Tests first: every change lands with a test that failed before it.
+- Run the suite from the repo root: `python -m pytest -q`.
+- Conventional commit messages (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
+- The design doc is `docs/design.md`; keep it in sync when behaviour changes.

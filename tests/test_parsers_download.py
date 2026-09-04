@@ -16,6 +16,10 @@ def _parse(name: str, slug: str):
     return parse_movie(html, slug)
 
 
+def _parse_string(page: str, slug: str):
+    return parse_movie(HTMLParser(page), slug)
+
+
 def test_authed_movie_has_original_links() -> None:
     details = _parse("movie_interstellar_authed.html", "interstellar-2014")
     assert details.originals
@@ -118,3 +122,84 @@ def test_season_links_form_seasons_and_flip_kind() -> None:
     assert packs["1080p"].episodes[1].size is None
     assert details.originals == []
     assert details.dubs == []
+
+
+RAW_PAGE = (
+    '<html><head><script type="application/ld+json">'
+    '{"@graph":[{"@type":"WebPage","name":"دانلود انیمه Heavens Feel II lost butterfly 2019 - پروانه"},'
+    '{"@type":"ImageObject","url":"https://img.example.com/p.jpg"}]}'
+    "</script></head><body>"
+    '<div class="single_dlbox"><div class="inner_dl_box_n_single">'
+    '<div class="title_rows_dls"><h3>نسخه بدون زیرنویس</h3>'
+    '<span class="label_dl_row no_subtitle_dl">بدون زیرنویس</span></div>'
+    '<div class="item_row_dl free_row">'
+    '<a class="dllink" href="https://dl6.example.com/Movies/Heavens.Feel.II.2019.BD.Remux.mkv">dl</a>'
+    '<div class="meta_row"><div class="item_meta_n_dl size_meta">'
+    '<span class="label">حجم</span><span class="value">9.2 GB</span></div></div>'
+    '<div class="title_side_row"><span class="quality_name">BluRay 1080p Remux</span></div>'
+    "</div>"
+    '<div class="item_row_dl free_row">'
+    '<a class="dllink" href="https://dl6.example.com/Movies/Heavens.Feel.II.2019.RAW.mkv">dl</a>'
+    '<div class="title_side_row"><span class="quality_name">RAW</span></div>'
+    "</div>"
+    "</div></div></body></html>"
+)
+
+
+def test_raw_release_without_dub_or_sub_still_yields_links() -> None:
+    """A raw release has no 'dubbed' path segment and may carry no resolution
+    token in the filename; the row's own quality badge must still be used."""
+    details = _parse_string(RAW_PAGE, "heavens-feel-ii-2019")
+    assert details.originals
+    assert details.dubs == []
+    assert not details.has_dub
+
+
+def test_raw_release_quality_comes_from_row_badge() -> None:
+    """A badge with a resolution is narrowed to it; one without is kept verbatim."""
+    details = _parse_string(RAW_PAGE, "heavens-feel-ii-2019")
+    qualities = [link.quality for link in details.originals]
+    assert qualities == ["1080p", "RAW"]
+
+
+def test_link_without_any_quality_hint_falls_back() -> None:
+    page = (
+        '<html><head><script type="application/ld+json">'
+        '{"@graph":[{"@type":"WebPage","name":"Movie - فیلم"},'
+        '{"@type":"ImageObject","url":"https://img.example.com/p.jpg"}]}'
+        "</script></head><body>"
+        '<div class="item_row_dl"><a href="https://dl.example.com/movie/Film.2019.Remux.mkv">dl</a></div>'
+        "</body></html>"
+    )
+    details = _parse_string(page, "movie-2019")
+    assert [link.quality for link in details.originals] == ["نسخه اصلی"]
+
+
+def test_row_without_size_does_not_borrow_a_neighbours_size() -> None:
+    details = _parse_string(RAW_PAGE, "heavens-feel-ii-2019")
+    assert details.originals[0].size == "9.2 GB"
+    assert details.originals[1].size is None
+
+
+def test_anime_title_prefix_is_stripped() -> None:
+    details = _parse_string(RAW_PAGE, "heavens-feel-ii-2019")
+    assert details.summary.title_en == "Heavens Feel II lost butterfly"
+    assert details.summary.title_fa == "پروانه"
+
+
+def test_non_media_downloads_are_ignored() -> None:
+    """The site footer advertises its own apps from the same dl* hosts."""
+    page = (
+        '<html><head><script type="application/ld+json">'
+        '{"@graph":[{"@type":"WebPage","name":"Movie - فیلم"},'
+        '{"@type":"ImageObject","url":"https://img.example.com/p.jpg"}]}'
+        "</script></head><body>"
+        '<div class="item_row_dl"><a href="https://dl.example.com/app/zarmob.apk">app</a>'
+        '<div class="title_side_row"><span class="quality_name">1080p</span></div></div>'
+        '<div class="item_row_dl"><a href="https://dl.example.com/movie/Film.2019.mkv">dl</a>'
+        '<div class="title_side_row"><span class="quality_name">WEB-DL 720p</span></div></div>'
+        "</body></html>"
+    )
+    details = _parse_string(page, "movie-2019")
+    assert [link.quality for link in details.originals] == ["720p"]
+    assert all(".apk" not in link.url for link in details.originals)

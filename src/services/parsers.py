@@ -34,6 +34,11 @@ SEASON_HEADING_TAGS = ("h2", "h3", "h4")
 SEASON_HEADING_WORD = "فصل"
 SEASON_LABEL_PATTERN = re.compile(r"فصل[\s\u200c]+\S+")
 QUALITY_PATTERN = re.compile(r"\d{3,4}p", re.IGNORECASE)
+QUALITY_BADGE_SELECTOR = ".quality_name"
+SIZE_VALUE_SELECTOR = ".size_meta .value, .size_item_meta .value_meta_qu"
+ROW_CONTAINER_CLASSES = ("item_row_dl", "item_quality_n_row")
+MEDIA_EXTENSIONS = (".mkv", ".mp4", ".avi", ".m4v", ".mov", ".webm", ".mka", ".mp3", ".aac", ".srt", ".zip")
+UNKNOWN_QUALITY = "نسخه اصلی"
 EPISODE_PATTERN = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
 SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(گی[گک]ابایت|مگابایت|کیلوبایت|[GMK]i?B)", re.IGNORECASE)
 SIZE_UNITS = {"گیگابایت": "GB", "گیکابایت": "GB", "مگابایت": "MB", "کیلوبایت": "KB"}
@@ -53,7 +58,11 @@ def filter_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
 
 
 def parse_cookies(raw: str) -> dict[str, str]:
-    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header; domain fields are discarded and all cookies are kept because the jar is per-bot and zarfilm ignores irrelevant entries."""
+    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header.
+
+    Domain fields are discarded and all cookies are kept: the jar is per-bot and
+    zarfilm ignores irrelevant entries.
+    """
     text = raw.lstrip()
     if text.startswith(("[", "{")):
         try:
@@ -370,26 +379,66 @@ def _download_link(anchor: Node) -> DownloadLink | None:
     href = anchor.attributes.get("href") or ""
     if not href.startswith(DL_HREF_PREFIX):
         return None
-    quality_match = QUALITY_PATTERN.search(urlparse(href).path) or QUALITY_PATTERN.search(anchor.text())
-    if quality_match is None:
+    path = urlparse(href).path
+    if not path.lower().endswith(MEDIA_EXTENSIONS):
         return None
     return DownloadLink(
-        quality=quality_match.group(0).lower(),
+        quality=_link_quality(anchor, path),
         url=href,
         size=_nearby_size(anchor),
         host=urlparse(href).netloc or None,
     )
 
 
-def _nearby_size(anchor: Node) -> str | None:
+def _link_quality(anchor: Node, path: str) -> str:
+    """Resolve a quality label, preferring the row's own badge over the filename.
+
+    Raw releases (no dub, no hardsub) often carry no resolution token in the
+    filename, so the URL alone is not a reliable source.
+    """
+    if badge := _row_quality_badge(anchor):
+        if match := QUALITY_PATTERN.search(badge):
+            return match.group(0).lower()
+        return badge
+    for text in (path, anchor.text()):
+        if match := QUALITY_PATTERN.search(text):
+            return match.group(0).lower()
+    return UNKNOWN_QUALITY
+
+
+def _row_quality_badge(anchor: Node) -> str | None:
     node = anchor.parent
     for _ in range(4):
         if node is None or node.tag == "body":
             return None
-        if size_match := SIZE_PATTERN.search(node.text()):
-            return _normalize_size(size_match.group(1), size_match.group(2))
+        if badge := _text(node, QUALITY_BADGE_SELECTOR):
+            return badge
         node = node.parent
     return None
+
+
+def _nearby_size(anchor: Node) -> str | None:
+    """Read the size from the anchor's own row.
+
+    The walk stops at the row container so a row that lists no size cannot
+    borrow the one belonging to a neighbouring row.
+    """
+    node = anchor.parent
+    for _ in range(4):
+        if node is None or node.tag == "body":
+            return None
+        size = _text(node, SIZE_VALUE_SELECTOR)
+        if size and (size_match := SIZE_PATTERN.search(size)):
+            return _normalize_size(size_match.group(1), size_match.group(2))
+        if _is_row_container(node):
+            break
+        node = node.parent
+    return None
+
+
+def _is_row_container(node: Node) -> bool:
+    classes = node.attributes.get("class") or ""
+    return any(marker in classes for marker in ROW_CONTAINER_CLASSES)
 
 
 def _normalize_size(value: str, unit: str) -> str:
@@ -474,7 +523,7 @@ def _year_from_slug(slug: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _text(scope: HTMLParser, selector: str) -> str | None:
+def _text(scope: HTMLParser | Node, selector: str) -> str | None:
     node = scope.css_first(selector)
     return node.text(strip=True) if node else None
 

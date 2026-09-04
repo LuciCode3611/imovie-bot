@@ -1,5 +1,5 @@
-from src.services.matching import fallback_query, filter_matches, normalize_title, title_matches
 from src.models import MediaKind, MovieSummary
+from src.services.matching import fallback_query, filter_matches, normalize_title, title_matches
 
 
 def _summary(title: str) -> MovieSummary:

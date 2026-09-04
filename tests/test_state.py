@@ -1,5 +1,5 @@
 from src.models import MediaKind, MovieSummary
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 
 
 def _entry() -> CardEntry:
