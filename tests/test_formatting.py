@@ -11,6 +11,7 @@ from src.repos.state import CardEntry
 from src.services.formatting import (
     apply_icon,
     card_text,
+    copy_chunk_count,
     episode_caption,
     episode_keyboard,
     episode_list_text,
@@ -244,7 +245,7 @@ def test_episode_keyboard_single_page_has_copy_all_and_back() -> None:
     assert all(len((btn.callback_data or "").encode()) <= 64 for btn in flat if btn.callback_data)
 
 
-def test_episode_keyboard_long_pack_paginates_and_splits_copy() -> None:
+def test_episode_keyboard_long_pack_paginates_with_single_copy_button() -> None:
     pack = _pack_with_episodes(120)  # 30 per page → 4 pages
     assert episode_page_count(pack) == 4
     first = episode_keyboard(pack, "abc123", 0, page=0)
@@ -255,12 +256,28 @@ def test_episode_keyboard_long_pack_paginates_and_splits_copy() -> None:
     nav = last.inline_keyboard[0]
     assert [btn.text for btn in nav] == ["◀", "4/4"]
     assert nav[0].callback_data == "e:abc123:0:2"
-    # copy text split into multiple buttons, each under the 256-char cap
+    # exactly ONE copy button per keyboard; chunk nav reaches every link,
+    # each chunk under Telegram's 256-char CopyTextButton cap
     copy = [btn for row in last.inline_keyboard for btn in row if btn.copy_text is not None]
-    assert len(copy) > 1
-    assert all(len(btn.copy_text.text) <= 256 for btn in copy)
-    joined = "\n".join(btn.copy_text.text for btn in copy).splitlines()
-    assert len(joined) == 120
+    assert len(copy) == 1
+    assert len(copy[0].copy_text.text) <= 256
+    assert "کپی همه لینک‌ها (1/" in copy[0].text
+    # stepping through all copy chunks covers all 120 links exactly once
+    total_chunks = copy_chunk_count(pack)
+    assert total_chunks > 1
+    seen: list[str] = []
+    for chunk_index in range(total_chunks):
+        kb = episode_keyboard(pack, "abc123", 0, page=0, copy_chunk=chunk_index)
+        copy_buttons = [btn for row in kb.inline_keyboard for btn in row if btn.copy_text is not None]
+        assert len(copy_buttons) == 1
+        seen.extend(copy_buttons[0].copy_text.text.splitlines())
+    assert len(seen) == 120
+    # chunk navigation buttons point at cc: callbacks and stay within range
+    nav_buttons = [
+        btn for row in kb.inline_keyboard for btn in row if (btn.callback_data or "").startswith("cc:")
+    ]
+    assert nav_buttons  # at least the "previous" button on the last chunk
+    assert all((btn.callback_data or "").startswith("cc:abc123:0:") for btn in nav_buttons)
 
 
 def test_episode_caption_includes_season_quality_and_page() -> None:

@@ -13,6 +13,7 @@ from src.repos.cache import TTLCache
 from src.repos.state import CallbackState, CardEntry
 from src.services.formatting import (
     card_text,
+    copy_chunk_count,
     episode_caption,
     episode_keyboard,
     episode_page_count,
@@ -211,6 +212,8 @@ async def choose_quality(callback: CallbackQuery, bot: Bot, card_state: Callback
         # episode list lives on the same card message — never a separate one
         entry.selection = f"s:{season_index}"
         entry.pack = idx
+        entry.ep_page = 0
+        entry.copy_chunk = 0
         await _render(
             bot=bot,
             message=callback.message,
@@ -266,6 +269,7 @@ async def flip_episode_page(callback: CallbackQuery, bot: Bot, card_state: Callb
         return
     entry.selection = f"s:{season_text}"
     entry.pack = pack_index
+    entry.ep_page = page
     # rich messages fit the whole pack in one table, so only the classic path
     # needs the page index
     await _render(
@@ -274,7 +278,43 @@ async def flip_episode_page(callback: CallbackQuery, bot: Bot, card_state: Callb
         entry=entry,
         rich_message=rich_episode_message(pack, season),
         classic_text=episode_caption(pack, season, page=page),
-        reply_markup=episode_keyboard(pack, key, season_index, page=page),
+        reply_markup=episode_keyboard(pack, key, season_index, page=page, copy_chunk=entry.copy_chunk),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cc:"))
+async def switch_copy_chunk(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+    """Step between the 256-char chunks of the single «کپی همه لینک‌ها»
+    button — markup-only change, the card body stays untouched."""
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4 or not parts[2].isdigit() or not parts[3].isdigit():
+        await callback.answer(INVALID_PATH_TEXT, show_alert=True)
+        return
+    _, key, season_text, chunk_text = parts
+    entry = card_state.get(key)
+    if entry is None or entry.details is None:
+        await callback.answer(EXPIRED_TEXT, show_alert=True)
+        return
+    season_index = int(season_text)
+    if season_index >= len(entry.details.seasons) or entry.pack is None:
+        await callback.answer(INVALID_PATH_TEXT, show_alert=True)
+        return
+    season = entry.details.seasons[season_index]
+    if entry.pack >= len(season.qualities):
+        await callback.answer(INVALID_PATH_TEXT, show_alert=True)
+        return
+    pack = season.qualities[entry.pack]
+    chunk = int(chunk_text)
+    if chunk < 0 or chunk >= copy_chunk_count(pack):
+        await callback.answer(INVALID_PATH_TEXT, show_alert=True)
+        return
+    entry.copy_chunk = chunk
+    await edit_markup_safely(
+        callback.message,
+        reply_markup=episode_keyboard(
+            pack, key, season_index, page=entry.ep_page, copy_chunk=chunk
+        ),
     )
     await callback.answer()
 

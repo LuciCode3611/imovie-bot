@@ -13,6 +13,7 @@ from src.models import (
     MovieSummary,
     QualityPack,
     Season,
+    SeriesStatus,
 )
 
 TITLE_PREFIXES = (
@@ -147,6 +148,7 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
         cast=_parse_people(html, ("ستارگان", "بازیگران")),
         runtime=_parse_runtime(html),
         trailer_url=_parse_trailer(html),
+        series_status=_parse_series_status(html) if summary.kind is MediaKind.SERIES else None,
     )
     _parse_genres(html, summary)
     return _parse_download_box(html, details)
@@ -215,6 +217,40 @@ def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
 
 def _parse_countries(html: HTMLParser) -> list[str]:
     return _stars_block(html, ("کشور", "محصول"))
+
+
+_ENDED_MARKERS = ("تکمیل شده", "تمام شده", "پایان سریال", "سریال به پایان")
+# any season/series marker that means the show is still being produced
+_ONGOING_MARKERS = (
+    "در حال پخش",
+    "درحال پخش",
+    "تمدید",
+    "پایان فصل",
+    "اضافه شد",
+    "به زودی",
+    "قسمت جدید",
+)
+
+
+def _parse_series_status(html: HTMLParser) -> SeriesStatus | None:
+    """Map zarfilm's per-season status labels (`.label_status` inside each
+    season row) to one of در حال پخش / تمام شده. The latest season's label
+    decides: if it's a 'completed season' marker the show is ended, anything
+    that says still airing/renewed/new episodes means ongoing."""
+    labels = [
+        node.text(strip=True)
+        for node in html.css(".single_dlbox .row_season_n_dl .label_status")
+        if node.text(strip=True)
+    ]
+    if not labels:
+        return None
+    # the last season is the authoritative one
+    latest = labels[-1]
+    if any(marker in latest for marker in _ENDED_MARKERS):
+        return SeriesStatus.ENDED
+    # anything else (airing, renewed, "episode N added", season finale, …)
+    # means the show is still going
+    return SeriesStatus.ONGOING
 
 
 def _parse_trailer(html: HTMLParser) -> str | None:

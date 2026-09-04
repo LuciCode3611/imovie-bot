@@ -101,3 +101,39 @@ def test_split_title_strips_download_prefixes() -> None:
     assert _split_title("دانلود انیمه Black Torch - بلک تورچ") == ("Black Torch", "بلک تورچ")
     assert _split_title("دانلود انیمیشن Spider-Man") == ("Spider-Man", None)
     assert _split_title("دانلود مستند Cosmos") == ("Cosmos", None)
+
+
+def _season_row_html(status: str) -> str:
+    return (
+        '<div class="single_dlbox"><div class="row_season_n_dl">'
+        '<div class="title_series_row_n">'
+        '<div class="season_name"><span>فصل 1</span></div>'
+        f'<span class="label_status">{status}</span>'
+        "</div></div></div>"
+    )
+
+
+def test_series_status_detects_ended_and_ongoing() -> None:
+    from src.models import SeriesStatus
+    from src.services.parsers import _parse_series_status
+
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("فصل 1<br>تکمیل شده")))
+        is SeriesStatus.ENDED
+    )
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("فصل 2<br>پایان فصل دوم")))
+        is SeriesStatus.ONGOING
+    )
+    assert (
+        _parse_series_status(HTMLParser(_season_row_html("قسمت 3 اضافه شد")))
+        is SeriesStatus.ONGOING
+    )
+    multi = HTMLParser(
+        '<div class="single_dlbox">'
+        + _season_row_html("تکمیل شده")
+        + _season_row_html("تمدید شد")
+        + "</div>"
+    )
+    assert _parse_series_status(multi) is SeriesStatus.ONGOING
+    assert _parse_series_status(HTMLParser("<html></html>")) is None

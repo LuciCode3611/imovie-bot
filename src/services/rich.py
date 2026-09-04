@@ -32,6 +32,7 @@ from src.models import MovieDetails, QualityPack, Season
 LABEL_EMOJI: dict[str, tuple[str, str]] = {
     # role:        (custom_emoji_id, fallback unicode alternative)
     "imdb": ("5438496463044752972", "⭐"),
+    "status": ("5416081784641168838", "📺"),
     "country": ("5424972470023104089", "🌍"),
     "runtime": ("5458603043203327669", "⏱"),
     "genre": ("5397782960512444700", "🎭"),
@@ -71,6 +72,7 @@ def _info_table(details: MovieDetails) -> InputRichBlockTable:
             rows.append([_label_cell(role, label), _text_cell(value)])
 
     add("imdb", "امتیاز", details.imdb)
+    add("status", "وضعیت", details.series_status.label if details.series_status else None)
     add("runtime", "مدت زمان", details.runtime)
     add("country", "محصول", "، ".join(details.countries) if details.countries else None)
     add("genre", "ژانر", "، ".join(summary.genres[:5]) if summary.genres else None)

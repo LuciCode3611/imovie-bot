@@ -8,6 +8,15 @@ class MediaKind(StrEnum):
     SERIES = "series"
 
 
+class SeriesStatus(StrEnum):
+    ONGOING = "ongoing"  # در حال پخش
+    ENDED = "ended"  # تمام شده
+
+    @property
+    def label(self) -> str:
+        return "🟢 در حال پخش" if self is SeriesStatus.ONGOING else "🔴 تمام شده"
+
+
 class DownloadLink(BaseModel):
     quality: str
     url: str
@@ -55,6 +64,8 @@ class MovieDetails(BaseModel):
     cast: list[str] = Field(default_factory=list)
     runtime: str | None = None
     trailer_url: str | None = None
+    # TV-show status only (None for movies / when the site doesn't state it)
+    series_status: SeriesStatus | None = None
     originals: list[DownloadLink] = Field(default_factory=list)
     dubs: list[DownloadLink] = Field(default_factory=list)
     seasons: list[Season] = Field(default_factory=list)

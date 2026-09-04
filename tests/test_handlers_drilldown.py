@@ -194,7 +194,7 @@ async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) 
     assert "table" in rich_blocks
     episode_kb = ep_kw["reply_markup"]
     flat = [btn for row in episode_kb.inline_keyboard for btn in row]
-    assert any("کپی لینک" in btn.text and btn.copy_text is not None for btn in flat)
+    assert any("کپی" in btn.text and btn.copy_text is not None for btn in flat)
     assert flat[-1].text.startswith("🔙 بازگشت") and flat[-1].callback_data == f"bs:{key}:0"
 
     # back returns to the season quality keyboard
@@ -558,3 +558,31 @@ async def test_trailer_button_announces_coming_soon(deps: dict[str, object]) -> 
     cb.message.answer_video.assert_not_awaited()
     cb.message.answer.assert_not_awaited()
     deps["zarfilm"].resolve_trailer.assert_not_called()
+
+
+async def test_copy_chunk_switch_keeps_single_copy_button(deps: dict[str, object]) -> None:
+    from src.models import EpisodeLink, QualityPack, Season
+
+    # 12 episodes with long URLs → multiple 256-char chunks, one copy button each
+    episodes = [
+        EpisodeLink(label=f"E{i:02d}", url=f"https://dl.example.com/very/long/path/episode_number_{i:02d}_quality_1080p_bluray_x265_file.mkv")
+        for i in range(12)
+    ]
+    details = _series_details()
+    details.seasons[0] = Season(label="فصل ۱", qualities=[QualityPack(quality="1080p", episodes=episodes)])
+    entry = CardEntry(summary=details.summary, details=details, selection="s:0", pack=0, rich=False)
+    entry.ep_page = 0
+    entry.copy_chunk = 0
+    key = deps["card_state"].create(entry)
+    from src.services.formatting import copy_chunk_count
+
+    total = copy_chunk_count(details.seasons[0].qualities[0])
+    assert total > 1
+    message = AsyncMock()
+    message.edit_reply_markup = AsyncMock()
+    await card.switch_copy_chunk(_cb(f"cc:{key}:0:1", message), **deps)  # type: ignore[arg-type]
+    kb = message.edit_reply_markup.await_args.kwargs["reply_markup"]
+    copy_buttons = [btn for row in kb.inline_keyboard for btn in row if btn.copy_text is not None]
+    assert len(copy_buttons) == 1
+    assert "کپی همه لینک‌ها (2/" in copy_buttons[0].text
+    assert entry.copy_chunk == 1

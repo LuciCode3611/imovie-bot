@@ -57,6 +57,8 @@ def card_text(details: MovieDetails) -> str:
     meta_parts: list[str] = []
     if details.imdb:
         meta_parts.append(f"⭐ {escape(details.imdb)}")
+    if details.series_status:
+        meta_parts.append(f"📺 {escape(details.series_status.label)}")
     if summary.genres:
         meta_parts.append("🎭 " + escape("، ".join(summary.genres[:3])))
     lines = [head]
@@ -256,6 +258,7 @@ def episode_keyboard(
     key: str,
     season_index: int,
     page: int = 0,
+    copy_chunk: int = 0,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     pages = episode_page_count(pack)
@@ -267,31 +270,57 @@ def episode_keyboard(
         if page < pages - 1:
             nav.append(InlineKeyboardButton(text="▶", callback_data=f"e:{key}:{season_index}:{page + 1}"))
         rows.append(nav)
-    rows.extend(_copy_rows(pack))
+    rows.extend(_copy_rows(pack, key, season_index, copy_chunk))
     rows.append([_back_to_season_button(key, season_index)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _copy_rows(pack: QualityPack) -> list[list[InlineKeyboardButton]]:
+def copy_chunk_count(pack: QualityPack) -> int:
+    """How many 256-char chunks the pack's episode links split into."""
+    return max(1, len(_copy_chunks([episode.url for episode in pack.episodes])))
+
+
+def _copy_rows(pack: QualityPack, key: str, season_index: int, chunk_index: int = 0) -> list[list[InlineKeyboardButton]]:
+    """Exactly ONE «کپی همه لینک‌ها» CopyTextButton (Telegram caps the copied
+    text at 256 chars). When the links don't fit in one chunk the button copies
+    the current chunk and a «بقیه لینک‌ها ▶» switch-button steps to the next
+    chunk, so every link stays reachable without ever showing a second copy
+    button."""
     chunks = _copy_chunks([episode.url for episode in pack.episodes])
     if not chunks:
         return []
-    if len(chunks) == 1:
-        return [[InlineKeyboardButton(text="📋 کپی همه لینک‌ها", copy_text=CopyTextButton(text=chunks[0]))]]
-    rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for idx, chunk in enumerate(chunks):
-        row.append(
-            InlineKeyboardButton(
-                text=f"📋 کپی لینک‌ها {idx + 1}/{len(chunks)}",
-                copy_text=CopyTextButton(text=chunk),
+    chunk_index = max(0, min(chunk_index, len(chunks) - 1))
+    return _copy_chunk_rows(chunks, chunk_index, key, season_index)
+
+
+def _copy_chunk_rows(
+    chunks: list[str],
+    chunk_index: int,
+    key: str,
+    season_index: int,
+) -> list[list[InlineKeyboardButton]]:
+    total = len(chunks)
+    label = "📋 کپی همه لینک‌ها" if total == 1 else f"📋 کپی همه لینک‌ها ({chunk_index + 1}/{total})"
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=label, copy_text=CopyTextButton(text=chunks[chunk_index]))]
+    ]
+    if total > 1:
+        nav: list[InlineKeyboardButton] = []
+        if chunk_index > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="◀ لینک‌های قبلی",
+                    callback_data=f"cc:{key}:{season_index}:{chunk_index - 1}",
+                )
             )
-        )
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+        if chunk_index < total - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="بقیه لینک‌ها ▶",
+                    callback_data=f"cc:{key}:{season_index}:{chunk_index + 1}",
+                )
+            )
+        rows.append(nav)
     return rows
 
 
