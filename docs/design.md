@@ -40,7 +40,7 @@ Verified facts from probing (2026-09-02):
 
 ## 3. Architecture
 
-Single Python process, layered per `AGENTS.md`:
+Single Python process, layered per `CONTRIBUTING.md`:
 
 ```
 src/
@@ -231,7 +231,7 @@ solving.
 
 ## 8. Milestones (for the implementation plan)
 
-1. Scaffolding: models, exceptions, config — *per AGENTS.md, starts with
+1. Scaffolding: models, exceptions, config — *per `CONTRIBUTING.md`, starts with
    `src/models/` + `src/exceptions.py` structure proposal*.
 2. `ZarfilmClient` login + session persistence (+ live smoke test).
 3. Parsers for search + movie page (+ fixtures).
@@ -249,5 +249,5 @@ solving.
   dub to confirm how zarfilm labels season/dub links (milestone 3 fixture).
 - Custom emoji IDs for button icons are supplied by the owner at
   implementation time and go into the config mapping (Section 3); the
-  remaining UI text templates in `AGENTS.md` are still proposals until the
+  remaining UI text templates in `CONTRIBUTING.md` are still proposals until the
   owner finalizes them in this review.

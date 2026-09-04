@@ -1,14 +1,12 @@
 # Zarfilm Telegram Bot Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** A private, allowlisted Telegram bot that searches zarfilm.com and delivers direct download links via drill-down inline keyboards (language → quality → file, seasons → quality → episode list).
 
-**Architecture:** Single Python process, layered per AGENTS.md (`src/handlers`, `src/services`, `src/repos`, `src/models`). aiogram 3 long polling; httpx session with persisted login cookies and auto re-login; pure-function parsers from HTML fixtures; in-memory TTL cache + callback state (no database).
+**Architecture:** Single Python process, layered (`src/handlers`, `src/services`, `src/repos`, `src/models`). aiogram 3 long polling; httpx session with persisted login cookies and auto re-login; pure-function parsers from HTML fixtures; in-memory TTL cache + callback state (no database).
 
 **Tech Stack:** Python 3.12, aiogram ≥ 3.31 (ButtonStyle, `icon_custom_emoji_id`), httpx, selectolax, pydantic v2 + pydantic-settings, pytest + pytest-asyncio.
 
-**Spec:** `docs/superpowers/specs/2026-09-02-zarfilm-telegram-bot-design.md` (plus governing rules in `AGENTS.md` — executors read both). Plan review constitutes the per-component outline approval required by AGENTS.md; executors pause for the user only at the two live-data gates (Task 4 capture, Task 6 selector confirmation) and on any spec deviation.
+**Spec:** `docs/design.md`. Two steps need live data: the Task 4 fixture capture and the Task 6 selector confirmation.
 
 ## Global Constraints
 
@@ -19,7 +17,7 @@
 - Exactly one zarfilm session (owner's VIP); serialized site requests via `asyncio.Lock`; realistic Chrome User-Agent; TTL caches in front of all site calls.
 - `callback_data` uses short keys (`m:<6-hex>` style) — never raw slugs; every value ≤ 64 bytes.
 - Secrets only in `.env`; `session.json` never committed (already in `.gitignore`).
-- Dev machine is Windows: use `pathlib.Path`, no POSIX-only calls; all commands run from repo root `D:\VibeCoding\movie_bot`.
+- Dev machine is Windows: use `pathlib.Path`, no POSIX-only calls.
 - TDD: every task writes its test first, watches it fail, then implements; commit after each task with conventional messages.
 - Run tests with `python -m pytest <file> -v` from repo root.
 
@@ -1304,7 +1302,7 @@ git commit -m "feat: zarfilm search and movie fetch with re-login and retry"
 **Interfaces:**
 - Consumes: models (Task 1); `ButtonStyle` from aiogram.
 - Produces:
-  - `card_text(details: MovieDetails) -> str` — HTML-escaped RTL Persian card per AGENTS.md template (title/year line, ⭐ IMDb · 🎭 genres · ⏱ runtime line, truncated plot ≤ ~300 chars).
+  - `card_text(details: MovieDetails) -> str` — HTML-escaped RTL Persian card per `CONTRIBUTING.md` template (title/year line, ⭐ IMDb · 🎭 genres · ⏱ runtime line, truncated plot ≤ ~300 chars).
   - `search_keyboard(results: list[tuple[str, CardEntry]]) -> InlineKeyboardMarkup` — one button per result, `callback_data=f"m:{key}"`, style PRIMARY.
   - `root_keyboard(details: MovieDetails, key: str) -> InlineKeyboardMarkup` — dub movie: `[دانلود با زبان اصلی]` PRIMARY + `[دانلود با دوبله فارسی]` SUCCESS → callbacks `l:{key}:orig` / `l:{key}:dub`; no-dub movie: quality buttons (from `details.originals`) → `q:{key}:orig:{idx}`; series: season buttons → `s:{key}:{idx}`.
   - `quality_keyboard(links: list[DownloadLink], key: str, audio: str) -> InlineKeyboardMarkup` — all PRIMARY, labels `{quality} - {size}` when size known → `q:{key}:{audio}:{idx}`, plus `[انصراف]` DANGER → `x:{key}`.
