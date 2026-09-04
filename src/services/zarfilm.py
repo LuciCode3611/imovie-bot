@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -42,6 +43,35 @@ class ZarfilmClient:
     def set_cookies(self, cookies: Mapping[str, str]) -> None:
         for name, value in cookies.items():
             self._client.cookies.set(name, value)
+
+    def session_cookies(self) -> dict[str, str]:
+        return {name: value for name, value in self._client.cookies.items()}
+
+    def session_ttl_seconds(self) -> int | None:
+        """Remaining lifetime of the WordPress login cookie, in seconds.
+
+        A ``wordpress_logged_in_*`` cookie's value embeds the login expiry as
+        the second pipe/percent7C-separated field (a unix timestamp)."""
+        for name, value in self.session_cookies().items():
+            if not name.startswith("wordpress_logged_in"):
+                continue
+            for sep in ("|", "%7C"):
+                parts = value.split(sep)
+                if len(parts) >= 2 and parts[1].isdigit():
+                    return max(0, int(parts[1]) - int(time.time()))
+        return None
+
+    async def session_valid(self) -> bool:
+        """Live check: the home page shows the account menu only when logged
+        in. Returns False on any transport error or when no session exists."""
+        if not self._restore_session() and not self._logged_in:
+            return False
+        try:
+            response = await self._get("/")
+        except httpx.HTTPError:
+            return False
+        logged_out = self.LOGGED_OUT_MARK in response.text
+        return not logged_out
 
     def persist_session(self) -> None:
         jar = {name: value for name, value in self._client.cookies.items()}

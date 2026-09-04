@@ -86,7 +86,7 @@ async def test_auth_error_not_owner_answers_unavailable_and_dms_owner() -> None:
     event = _event(REQUESTER_ID)
     handled = await common.on_error(event, AuthError("session expired"), bot=bot, cfg=cfg)
     assert handled is True
-    event.update.message.answer.assert_awaited_once_with(common.UNAVAILABLE_TEXT)
+    event.update.message.answer.assert_awaited_once_with(common.SERVICE_DOWN_TEXT)
     bot.send_message.assert_awaited_once_with(OWNER_ID, common.SESSION_EXPIRED_TEXT)
 
 
@@ -107,7 +107,7 @@ async def test_auth_error_without_resolvable_owner_skips_dm() -> None:
     event = _event(REQUESTER_ID)
     handled = await common.on_error(event, AuthError("session expired"), bot=bot, cfg=cfg)
     assert handled is True
-    event.update.message.answer.assert_awaited_once_with(common.UNAVAILABLE_TEXT)
+    event.update.message.answer.assert_awaited_once_with(common.SERVICE_DOWN_TEXT)
     bot.send_message.assert_not_awaited()
 
 
@@ -116,7 +116,7 @@ async def test_auth_error_without_bot_skips_dm() -> None:
     event = _event(REQUESTER_ID)
     handled = await common.on_error(event, AuthError("session expired"), bot=None, cfg=cfg)
     assert handled is True
-    event.update.message.answer.assert_awaited_once_with(common.UNAVAILABLE_TEXT)
+    event.update.message.answer.assert_awaited_once_with(common.SERVICE_DOWN_TEXT)
 
 
 async def test_non_auth_zarfilm_error_never_dms_owner() -> None:

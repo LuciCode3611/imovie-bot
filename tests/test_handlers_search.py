@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -22,6 +23,7 @@ def _message(text: str, user_id: int = 42) -> Message:
     message = AsyncMock(spec=Message)
     message.text = text
     message.from_user = User(id=user_id, is_bot=False, first_name="t")
+    message.chat = SimpleNamespace(id=user_id)
     message.answer = AsyncMock(return_value=AsyncMock())
     return message
 
@@ -35,6 +37,7 @@ def _state() -> FSMContext:
 @pytest.fixture
 def deps() -> dict[str, Any]:
     return {
+        "bot": AsyncMock(),
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
@@ -48,7 +51,9 @@ async def test_search_replies_with_result_buttons(deps: dict[str, Any]) -> None:
     message = _message("interstellar")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
     status = message.answer.return_value
-    assert message.answer.await_args.args[0] == search.SEARCHING_TEXT
+    sent = message.answer.await_args
+    assert search.SEARCHING_TEXT in sent.args[0] and search.SEARCHING_EMOJI_ID in sent.args[0]
+    assert sent.kwargs.get("parse_mode") == "HTML"
     status.edit_text.assert_awaited_once()
     kb = status.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].callback_data.startswith("m:")
@@ -67,6 +72,7 @@ async def test_cached_search_skips_loading_message(deps: dict[str, Any]) -> None
 
 async def test_search_threads_custom_emoji_map(tmp_path) -> None:
     deps_local: dict[str, Any] = {
+        "bot": AsyncMock(),
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(search=AsyncMock(return_value=_results())),

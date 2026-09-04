@@ -18,11 +18,14 @@ WELCOME_TEXT = (
     "راهنمای سریع:\n"
     "۱. دکمهٔ 🔍 جستجو رو بزن.\n"
     "۲. نام فیلم یا سریال رو به فارسی یا انگلیسی بنویس.\n"
-    "۳. با دکمه‌های کنار پیام، زبان و کیفیت (یا فصل) رو انتخاب کن تا به لینک دانلود برسی."
+    "۳. با دکمه‌های کنار پیام، زبان و کیفیت (یا فصل) رو انتخاب کن تا به لینک دانلود برسی.\n\n"
+    "🛠 مالک ربات می‌تونه با /status داشبورد وضعیت رو ببینه."
 )
 UNAVAILABLE_TEXT = "دسترسی به منبع در دسترس نیست؛ بعداً تلاش کن."
 NOT_FOUND_TEXT = "این عنوان دیگه موجود نیست یا حذف شده."
 SESSION_EXPIRED_TEXT = "نشست منقضی شده؛ با /login کوکی جدید بفرست."
+# what a non-owner sees when the bot's site session has expired
+SERVICE_DOWN_TEXT = "😅 ربات فعلاً در دسترس نیست؛ به‌زودی برمی‌گردیم. کمی بعد دوباره تلاش کن."
 
 NOT_MODIFIED_MARKER = "message is not modified"
 
@@ -127,6 +130,7 @@ async def on_error(
         if requester_id is not None and requester_id == owner_id:
             text = SESSION_EXPIRED_TEXT
         else:
+            text = SERVICE_DOWN_TEXT
             await _alert_owner(bot, owner_id)
     if isinstance(target, Message):
         await target.answer(text)

@@ -1,17 +1,19 @@
 from html import escape
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+from aiogram.utils.chat_action import ChatActionSender
 
 from src.handlers.card import EXPIRED_TEXT
 from src.handlers.common import edit_text_safely
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 from src.services.formatting import results_keyboard, welcome_keyboard
 from src.services.zarfilm import ZarfilmClient
 
@@ -20,8 +22,29 @@ router = Router(name="search")
 NO_RESULTS_TEXT = "چیزی پیدا نشد؛ با املای دیگری امتحان کن."
 LISTENING_TEXT = "نام فیلم یا سریال رو بنویس…"
 HINT_TEXT = "برای جستجو، اول دکمهٔ جستجو رو بزن."
-SEARCHING_TEXT = "🔍 در حال جستجو…"
+SEARCHING_TEXT = "صبر کن پیداش کنم"
+# animated loading custom emoji appended to the searching status
+SEARCHING_EMOJI_ID = "5429411030960711866"
+SEARCHING_EMOJI_FALLBACK = "🔍"
 PAGE_SIZE = 5
+
+
+def searching_status() -> str:
+    """HTML status with an animated custom emoji at the end; bots fall back to
+    the alternative unicode emoji when custom emoji can't be sent."""
+    return (
+        f'{SEARCHING_TEXT} '
+        f'<tg-emoji emoji-id="{SEARCHING_EMOJI_ID}">{SEARCHING_EMOJI_FALLBACK}</tg-emoji>'
+    )
+
+
+async def send_searching_status(message: Message) -> Message:
+    """Post the searching status, retrying without the custom emoji if Telegram
+    rejects it (e.g. the owner has no Telegram Premium)."""
+    try:
+        return await message.answer(searching_status(), parse_mode="HTML")
+    except TelegramBadRequest:
+        return await message.answer(f"{SEARCHING_TEXT} {SEARCHING_EMOJI_FALLBACK}")
 
 
 class SearchStates(StatesGroup):
@@ -52,6 +75,7 @@ def results_header(query: str, total: int, page: int = 0) -> str:
 @router.message(StateFilter(SearchStates.listening), F.text & ~F.text.startswith("/"))
 async def handle_search(
     message: Message,
+    bot: Bot,
     state: FSMContext,
     zarfilm: ZarfilmClient,
     cache: TTLCache,
@@ -61,12 +85,14 @@ async def handle_search(
     query = (message.text or "").strip()
     cache_key = f"search:{query.lower()}"
     results: list[MovieSummary] | None = await cache.get(cache_key)
+    status = None
     if results is None:
-        status = await message.answer(SEARCHING_TEXT)
-        results = await zarfilm.search(query)
-        await cache.set(cache_key, results, cfg.search_ttl)
-    else:
-        status = None
+        # live "typing…" indicator for the whole fetch, plus a status message
+        # with the animated custom emoji
+        async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+            status = await send_searching_status(message)
+            results = await zarfilm.search(query)
+            await cache.set(cache_key, results, cfg.search_ttl)
     await state.clear()
     if not results:
         if status is not None:

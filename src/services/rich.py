@@ -120,7 +120,58 @@ def rich_episode_message(
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 
+def rich_dashboard_message(stats: dict) -> InputRichMessage:
+    """Owner dashboard: bot status, session/cookie validity and TTL.
+
+    ``stats`` keys: online (bool), session_present (bool), session_valid
+    (bool|None — None = not checked), ttl (int|None seconds)."""
+    online = "🟢 آنلاین" if stats.get("online") else "🔴 آفلاین"
+    if not stats.get("session_present"):
+        cookie = "🔴 بدون کوکی"
+    elif stats.get("session_valid") is True:
+        cookie = "🟢 معتبر"
+    elif stats.get("session_valid") is False:
+        cookie = "🔴 منقضی شده"
+    else:
+        cookie = "🟡 نامشخص"
+    ttl_text = _persian_ttl(stats.get("ttl")) or "—"
+
+    def s(value: str, *, header: bool = False) -> RichBlockTableCell:
+        return _cell(value, header=header)
+
+    table = InputRichBlockTable(
+        is_bordered=False,
+        is_compact=True,
+        cells=[
+            [s("وضعیت ربات", header=True), s(online)],
+            [s("کوکی نشست", header=True), s(cookie)],
+            [s("اعتبار باقی‌مانده", header=True), s(ttl_text)],
+        ],
+    )
+    blocks = [
+        InputRichBlockSectionHeading(text="🛠 داشبورد مدیریت ربات", size=2),
+        table,
+    ]
+    return InputRichMessage(blocks=blocks, is_rtl=True)
+
+
+def _persian_ttl(seconds: int | None) -> str | None:
+    if seconds is None:
+        return None
+    days, rem = divmod(int(seconds), 86400)
+    hours = rem // 3600
+    parts = []
+    if days:
+        parts.append(f"{days} روز")
+    if hours:
+        parts.append(f"{hours} ساعت")
+    if not parts:
+        return f"{int(seconds) // 60} دقیقه"
+    return " و ".join(parts)
+
+
 __all__ = [
     "rich_card_message",
+    "rich_dashboard_message",
     "rich_episode_message",
 ]
