@@ -2,8 +2,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from selectolax.parser import HTMLParser
-from selectolax.parser import Node
+from selectolax.parser import HTMLParser, Node
 
 from src.exceptions import ParseError
 from src.models import (
@@ -43,7 +42,11 @@ def filter_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
 
 
 def parse_cookies(raw: str) -> dict[str, str]:
-    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header; domain fields are discarded and all cookies are kept because the jar is per-bot and zarfilm ignores irrelevant entries."""
+    """Auto-detect pasted cookie format, trying JSON, then Netscape, then header.
+
+    Domain fields are discarded and all cookies are kept: the jar is per-bot and
+    zarfilm ignores irrelevant entries.
+    """
     text = raw.lstrip()
     if text.startswith(("[", "{")):
         try:

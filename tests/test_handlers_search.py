@@ -11,7 +11,7 @@ from src.handlers import search
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 
 
 def _results() -> list[MovieSummary]:

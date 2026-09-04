@@ -62,7 +62,7 @@ def _detach_routers() -> Iterator[None]:
     from src.handlers import search as search_module
 
     for router in (common.router, search_module.router, card_module.router, admin_module.router):
-        router._parent_router = None  # noqa: SLF001 - no public detach API in aiogram
+        router._parent_router = None
 
 
 def test_resolve_owner_prefers_owner_id() -> None:

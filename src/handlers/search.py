@@ -11,7 +11,7 @@ from src.handlers.common import edit_text_safely
 from src.models import MovieSummary
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CardEntry, CallbackState, SearchEntry
+from src.repos.state import CallbackState, CardEntry, SearchEntry
 from src.services.formatting import results_keyboard, welcome_keyboard
 from src.services.zarfilm import ZarfilmClient
 

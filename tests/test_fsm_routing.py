@@ -55,7 +55,7 @@ def _detach_routers() -> Iterator[None]:
         card_module.router,
         admin_module.router,
     ):
-        router._parent_router = None  # noqa: SLF001 - no public detach API in aiogram
+        router._parent_router = None
 
 
 def _update(text: str, update_id: int, bot: Bot) -> Update:
