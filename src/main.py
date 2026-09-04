@@ -6,6 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
 from src.handlers import admin, card, common, requests, search
 from src.handlers.middleware import AllowlistMiddleware, SearchLockMiddleware
@@ -48,6 +49,26 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     return dp, zarfilm
 
 
+USER_COMMANDS = [
+    BotCommand(command="start", description="شروع و منوی اصلی"),
+    BotCommand(command="search", description="جستجوی فیلم، سریال یا انیمه"),
+    BotCommand(command="help", description="راهنمای استفاده"),
+]
+OWNER_COMMANDS = [
+    *USER_COMMANDS,
+    BotCommand(command="login", description="ثبت کوکی ورود"),
+    BotCommand(command="status", description="وضعیت ربات"),
+]
+
+
+async def setup_commands(bot: Bot, config: Config) -> None:
+    """Publish the command menu so users tap instead of typing."""
+    await bot.set_my_commands(USER_COMMANDS, scope=BotCommandScopeDefault())
+    owner = resolve_owner(config)
+    if owner is not None:
+        await bot.set_my_commands(OWNER_COMMANDS, scope=BotCommandScopeChat(chat_id=owner))
+
+
 def create_bot(config: Config) -> Bot:
     if config.proxy_url is None:
         return Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -68,6 +89,7 @@ async def main() -> None:
     bot = create_bot(config)
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        await setup_commands(bot, config)
         await dp.start_polling(bot)
     finally:
         await zarfilm.close()

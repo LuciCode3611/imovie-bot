@@ -73,6 +73,13 @@ def results_header(query: str, total: int, page: int = 0) -> str:
     return header + ":"
 
 
+@router.message(F.text.startswith("/search"))
+async def search_command(message: Message, state: FSMContext) -> None:
+    """Menu shortcut for the search button: arm the listening state directly."""
+    await state.set_state(SearchStates.listening)
+    await message.answer(LISTENING_TEXT)
+
+
 @router.message(StateFilter(SearchStates.listening), F.text & ~F.text.startswith("/"))
 async def handle_search(
     message: Message,
