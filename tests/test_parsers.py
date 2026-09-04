@@ -137,3 +137,23 @@ def test_series_status_detects_ended_and_ongoing() -> None:
     )
     assert _parse_series_status(multi) is SeriesStatus.ONGOING
     assert _parse_series_status(HTMLParser("<html></html>")) is None
+
+
+def test_anime_series_detected_as_series_with_status() -> None:
+    from src.services.parsers import _detect_kind
+    from src.models import MediaKind, SeriesStatus
+    from src.services.parsers import _parse_series_status
+
+    # anime ("دانلود انیمه ...") is a TV series, not a movie
+    assert _detect_kind("دانلود انیمه Black Torch") is MediaKind.SERIES
+    # explicit animated movies stay movies
+    assert _detect_kind("دانلود انیمیشن Spider-Man") is MediaKind.MOVIE
+    # black-torch-shaped page: one season, "episode N added" label
+    html = HTMLParser(
+        '<div class="single_dlbox"><div class="row_season_n_dl">'
+        '<div class="title_series_row_n">'
+        '<div class="season_name"><span>فصل 1</span></div>'
+        '<span class="label_status">قسمت 9 اضافه شد</span>'
+        "</div></div></div>"
+    )
+    assert _parse_series_status(html) is SeriesStatus.ONGOING

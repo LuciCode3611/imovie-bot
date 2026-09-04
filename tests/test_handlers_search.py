@@ -32,6 +32,16 @@ def _message(text: str, user_id: int = 42) -> Message:
 def _state() -> FSMContext:
     state = AsyncMock(spec=FSMContext)
     state.clear = AsyncMock()
+    store: dict = {}
+
+    async def get_data() -> dict:
+        return dict(store)
+
+    async def update_data(**kwargs: object) -> None:
+        store.update(kwargs)
+
+    state.get_data = get_data
+    state.update_data = update_data
     return state
 
 
@@ -97,7 +107,16 @@ async def test_search_no_results_message(deps: dict[str, Any]) -> None:
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
     status = message.answer.return_value
-    status.edit_text.assert_awaited_once_with(search.NO_RESULTS_TEXT)
+    # the status message becomes the no-results notice with a request button
+    assert status.edit_text.await_count == 1
+    text = status.edit_text.await_args.args[0]
+    assert search.NO_RESULTS_TEXT in text
+    kb = status.edit_text.await_args.kwargs["reply_markup"]
+    flat = [btn for row in kb.inline_keyboard for btn in row]
+    assert any((btn.callback_data or "") == "req:go" and "ثبت درخواست" in btn.text for btn in flat)
+    # the failed query is stashed for the one-tap request
+    stored = await deps["state"].get_data()
+    assert stored.get("req_query") == "qqqqqq"
 
 
 async def test_search_uses_cache_before_site(deps: dict[str, Any]) -> None:
@@ -119,11 +138,10 @@ async def test_state_cleared_after_no_results(deps: dict[str, Any]) -> None:
     deps["zarfilm"].search = AsyncMock(return_value=[])
     message = _message("qqqqqq")
     await search.handle_search(message, **deps)  # type: ignore[arg-type]
-    # no-results notice + the request prompt
-    assert message.answer.await_count == 2
+    # the searching status is edited in place (no extra messages)
+    assert message.answer.await_count == 1
     deps["state"].clear.assert_awaited_once()
-    deps["state"].set_state.assert_awaited_once()
-    # the request is recorded when the user sends the title
+    # nothing recorded until the user taps «ثبت درخواست»
     assert deps["db"].count_open_requests() == 0
 
 

@@ -1,93 +1,93 @@
 """User content-request flow.
 
 When a search yields nothing (or a card has no download links) the user gets
-a «📥 درخواست این عنوان» button. Tapping it asks for the title; the first
-plain-text message is stored in the SQLite requests queue for the owner to
-review from the dashboard.
+a «📥 ثبت درخواست» button. A single tap registers the request in the SQLite
+queue and edits the message in place to «درخواست شما ثبت شد ✅».
 """
 
 import contextlib
+from html import escape
 
 from aiogram import F, Router
 from aiogram.enums.button_style import ButtonStyle
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    Message,
 )
 
 from src.repos.db import Database
+from src.repos.state import CallbackState
 
 router = Router(name="requests")
 
-ASK_REQUEST_TEXT = "📥 اسم فیلم یا سریالی که می‌خوای رو بنویس تا برامون ثبت بشه.\nبرای لغو، /start رو بزن یا دکمهٔ زیر رو بزن."
-REQUEST_SAVED_TEXT = "✅ درخواستت ثبت شد؛ به‌زودی بررسیش می‌کنیم. ممنون! 🎬"
-CANCELLED_TEXT = "درخواست لغو شد."
-TITLE_TOO_SHORT_TEXT = "اسم رو واضح‌تر بنویس (حداقل ۲ حرف)."
-
-MAX_TITLE_LEN = 200
-
-
-class RequestStates(StatesGroup):
-    title = State()
+NO_TITLE_TEXT = "عنوانی برای ثبت پیدا نشد؛ دوباره جستجو کن."
 
 
 def request_prompt_keyboard() -> InlineKeyboardMarkup:
+    """Button under a failed search; the failed query travels via FSM data."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📥 درخواست این عنوان", callback_data="req:start", style=ButtonStyle.PRIMARY)]
+            [InlineKeyboardButton(text="📥 ثبت درخواست", callback_data="req:go", style=ButtonStyle.PRIMARY)]
         ]
     )
 
 
-def request_cancel_keyboard() -> InlineKeyboardMarkup:
+def card_request_keyboard(key: str) -> InlineKeyboardMarkup:
+    """Button on a detail card with no downloadable links."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✖ لغو", callback_data="req:cancel", style=ButtonStyle.DANGER)]
+            [InlineKeyboardButton(text="📥 ثبت درخواست", callback_data=f"req:c:{key}", style=ButtonStyle.PRIMARY)]
         ]
     )
 
 
-async def begin_request(target: Message, state: FSMContext, query: str | None = None) -> None:
-    await state.set_state(RequestStates.title)
-    if query:
-        await state.update_data(req_query=query[:MAX_TITLE_LEN])
-        text = f"📥 درخواست «{query}» رو ثبت کنم؟\nاگه همین اسم درسته بفرستش، یا اسم کامل‌تری بنویس."
-    else:
-        text = ASK_REQUEST_TEXT
-    await target.answer(text, reply_markup=request_cancel_keyboard())
+def no_request_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[])
 
 
-@router.callback_query(F.data == "req:start")
-async def start_request(callback: CallbackQuery, state: FSMContext) -> None:
-    await begin_request(callback.message, state)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "req:cancel")
-async def cancel_request(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    with contextlib.suppress(TelegramBadRequest):
-        await callback.message.edit_text(CANCELLED_TEXT)
-    await callback.answer(CANCELLED_TEXT)
-
-
-@router.message(StateFilter(RequestStates.title), F.text & ~F.text.startswith("/"))
-async def receive_request(message: Message, state: FSMContext, db: Database) -> None:
-    title = (message.text or "").strip()
-    if len(title) < 2:
-        await message.answer(TITLE_TOO_SHORT_TEXT, reply_markup=request_cancel_keyboard())
-        return
-    user = message.from_user
+async def _confirm(callback: CallbackQuery, title: str, db: Database, state: FSMContext | None = None) -> None:
+    user = callback.from_user
     db.add_request(
         user_id=user.id if user else 0,
         user_name=user.full_name if user else "ناشناس",
         title=title,
     )
-    await state.clear()
-    await message.answer(REQUEST_SAVED_TEXT)
+    if state is not None:
+        with contextlib.suppress(Exception):
+            await state.update_data(req_query=None)
+    # clear the button first, then turn the message into the confirmation —
+    # both suppressed so a rich/photo message still answers the callback
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_reply_markup(reply_markup=None)
+    with contextlib.suppress(TelegramBadRequest):
+        await callback.message.edit_text(f"✅ درخواست «{escape(title[:80])}» ثبت شد؛ به‌زودی بررسیش می‌کنیم. 🎬")
+    await callback.answer("درخواست شما ثبت شد ✅")
+
+
+@router.callback_query(F.data == "req:go")
+async def request_from_search(
+    callback: CallbackQuery,
+    db: Database,
+    state: FSMContext,
+) -> None:
+    # the search handler stored the failed query in FSM data
+    data = await state.get_data()
+    query = (data or {}).get("req_query")
+    if not query:
+        await callback.answer(NO_TITLE_TEXT, show_alert=True)
+        return
+    await _confirm(callback, str(query), db, state)
+
+
+@router.callback_query(F.data.startswith("req:c:"))
+async def request_from_card(callback: CallbackQuery, db: Database, card_state: CallbackState) -> None:
+    key = (callback.data or "").removeprefix("req:c:")
+    entry = card_state.get(key)
+    if entry is None or not entry.details:
+        await callback.answer("عنوان در دسترس نیست؛ دوباره جستجو کن.", show_alert=True)
+        return
+    title = entry.details.summary.title_en
+    await _confirm(callback, title, db)

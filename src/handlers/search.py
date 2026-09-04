@@ -99,20 +99,15 @@ async def handle_search(
             await cache.set(cache_key, results, cfg.search_ttl)
     await state.clear()
     if not results:
-        if status is not None:
-            await status.edit_text(NO_RESULTS_TEXT)
-        else:
-            await message.answer(NO_RESULTS_TEXT)
-        # offer a «request this title» prompt on a fresh message (the search
-        # status message is owned by the search router)
-        from src.handlers.requests import RequestStates
-
-        await state.set_state(RequestStates.title)
+        # remember the failed query for the one-tap «ثبت درخواست» button
         await state.update_data(req_query=query[:200])
-        await message.answer(
-            f"📥 «{query}» رو پیدا نکردیم؛ اگه می‌خوای برامون درخواستش کنی، "
-            "همین اسم رو بفرست یا اسم کامل‌تری بنویس.",
-        )
+        from src.handlers.requests import request_prompt_keyboard
+
+        text = f"{NO_RESULTS_TEXT}\n\nمی‌تونی این عنوان رو به ما درخواست بدی 👇"
+        if status is not None:
+            await status.edit_text(text, reply_markup=request_prompt_keyboard())
+        else:
+            await message.answer(text, reply_markup=request_prompt_keyboard())
         return
     pairs: list[tuple[str, CardEntry]] = []
     for summary in results:

@@ -59,9 +59,9 @@ async def open_card(
         markup = root_keyboard(details, key, emoji_map=cfg.emoji)
     else:
         # title exists but no downloadable links — let the user request it
-        from src.handlers.requests import request_prompt_keyboard
+        from src.handlers.requests import card_request_keyboard
 
-        markup = request_prompt_keyboard()
+        markup = card_request_keyboard(key)
     # Bot API 10.1 rich card: poster + centered borderless metadata table +
     # centered story pull-quote in a single new message
     try:

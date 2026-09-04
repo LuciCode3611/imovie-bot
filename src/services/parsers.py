@@ -239,9 +239,16 @@ def _parse_series_status(html: HTMLParser) -> SeriesStatus | None:
     that says still airing/renewed/new episodes means ongoing."""
     labels = [
         node.text(strip=True)
-        for node in html.css(".single_dlbox .row_season_n_dl .label_status")
+        for node in html.css(".row_season_n_dl .label_status, .single_dlbox .label_status")
         if node.text(strip=True)
     ]
+    if not labels:
+        # fallback: some anime templates render the season status elsewhere
+        labels = [
+            node.text(strip=True)
+            for node in html.css(".label_status")
+            if node.text(strip=True)
+        ]
     if not labels:
         return None
     # the last season is the authoritative one
@@ -455,7 +462,11 @@ def _strip_year(value: str) -> str:
 
 
 def _detect_kind(title: str) -> MediaKind:
-    return MediaKind.SERIES if "سریال" in title or "مجموعه" in title else MediaKind.MOVIE
+    # anime series ("دانلود انیمه ...") are TV shows too — only the explicit
+    # "انیمیشن" (animated movie) wording stays a movie
+    if any(word in title for word in ("سریال", "مجموعه", "انیمه")):
+        return MediaKind.SERIES
+    return MediaKind.MOVIE
 
 
 def _year_from_slug(slug: str) -> int | None:
