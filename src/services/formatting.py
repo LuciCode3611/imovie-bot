@@ -99,7 +99,9 @@ def root_keyboard(
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if details.is_series:
+    # an anime film is tagged as a series by title alone and carries no
+    # seasons: fall through to the movie layout so its links stay reachable
+    if details.is_series and details.seasons:
         for idx, season in enumerate(details.seasons):
             rows.append([_icon_button(season.label, "season", emoji_map, callback_data=f"s:{key}:{idx}", style=ButtonStyle.PRIMARY)])
     elif details.has_dub:

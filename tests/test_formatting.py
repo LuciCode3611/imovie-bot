@@ -61,6 +61,18 @@ def test_root_keyboard_dub_movie() -> None:
     assert styles.__contains__("primary") and styles.__contains__("success")
 
 
+def test_root_keyboard_anime_film_without_seasons_shows_qualities() -> None:
+    """An anime film is tagged SERIES from its title but has no seasons; its
+    download links must still be offered instead of an empty season list."""
+    details = _details()
+    details.summary.kind = MediaKind.SERIES
+    details.seasons = []
+    kb = root_keyboard(details, "abc123")
+    flat = [btn for row in kb.inline_keyboard for btn in row]
+    assert [btn.text for btn in flat] == ["1080p - 2.1GB", "720p - 1.4GB", "480p - 800MB"]
+    assert flat[0].callback_data == "q:abc123:orig:0"
+
+
 def test_root_keyboard_no_dub_goes_straight_to_qualities() -> None:
     kb = root_keyboard(_details(dub=False), "abc123")
     flat = [btn for row in kb.inline_keyboard for btn in row]
