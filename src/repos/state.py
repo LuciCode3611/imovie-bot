@@ -11,6 +11,7 @@ class CardEntry:
     details: MovieDetails | None = None
     selection: str = ""
     pack: int | None = None
+    rich: bool = False  # True once the card was rendered as a Bot API 10.1 rich message
 
 
 @dataclass

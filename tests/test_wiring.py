@@ -72,7 +72,7 @@ async def test_expired_cancel_key_alerts_with_real_state() -> None:
     cb.data = "x:dead00"
     cb.message = AsyncMock()
     cb.answer = AsyncMock()
-    await card.cancel(cb, card_state=CallbackState(ttl=60), cfg=_config())  # type: ignore[arg-type]
+    await card.cancel(cb, bot=AsyncMock(), card_state=CallbackState(ttl=60), cfg=_config())  # type: ignore[arg-type]
     cb.answer.assert_awaited_once_with(card.EXPIRED_TEXT, show_alert=True)
 
 
@@ -83,6 +83,7 @@ async def test_expired_open_card_key_alerts_with_real_state() -> None:
     cb.answer = AsyncMock()
     await card.open_card(  # type: ignore[arg-type]
         cb,
+        bot=AsyncMock(),
         zarfilm=AsyncMock(),
         cache=AsyncMock(),
         card_state=CallbackState(ttl=60),
@@ -120,8 +121,8 @@ async def test_build_dispatcher_warns_on_empty_allowlist_and_missing_owner(
     from src.main import build_dispatcher
 
     cfg = Config(_env_file=None, bot_token="1:abc", allowed_user_ids=[])
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         _, zarfilm = build_dispatcher(cfg)
         await zarfilm.close()
-    assert any("ALLOWED_USER_IDS is empty" in record.message for record in caplog.records)
+    assert any("OPEN TO EVERY user" in record.message for record in caplog.records)
     assert any("no owner configured" in record.message for record in caplog.records)

@@ -15,13 +15,15 @@ A private Telegram bot for finding movies and series: tap **جستجو**, type a
    | Variable | Purpose |
    | --- | --- |
    | `BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
-   | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot; the first one is the owner |
+   | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot; the first one is the owner. **Leave empty to allow everyone** (open bot). |
    | `OWNER_ID` | Owner Telegram ID: receives session-expiry alerts and is the /login account (falls back to the first `ALLOWED_USER_IDS` entry) |
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels (roles: `original`, `dub`, `season`, `quality`, `result`). Roles without an ID — or an unset `EMOJI` — fall back to built-in unicode icons, so the bot never breaks either way |
    | `SESSION_PATH` | Optional path for the stored login session (default `session.json` in the working directory); in Docker, point it at a mounted volume |
    | `PROXY_URL` | Optional; if Telegram is blocked on the host, set this to your local proxy endpoint, e.g. `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809` |
 
-   > **Note:** `OWNER_ID` alone does NOT grant bot access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in `ALLOWED_USER_IDS` or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`. If `ALLOWED_USER_IDS` is empty the bot rejects everyone and logs a warning at startup.
+   > **Note:** When `ALLOWED_USER_IDS` is set, `OWNER_ID` alone does NOT grant access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in it or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`. **If `ALLOWED_USER_IDS` is empty the bot is OPEN TO EVERY user** (and logs an info line at startup); in that open mode set `OWNER_ID` explicitly if you want `/login` and session alerts.
+
+   Cards use Bot API 10.1 **rich messages** (poster + centered borderless metadata table + centered story pull-quote). On Telegram clients older than that the bot automatically falls back to the classic photo card.
 
 3. Run:
 

@@ -10,6 +10,7 @@ BUSY_TEXT = "یه جستجو در حال اجراست؛ کمی صبر کن."
 
 class AllowlistMiddleware(BaseMiddleware):
     def __init__(self, allowed: set[int]) -> None:
+        # an empty allowlist means "open to everyone"
         self._allowed = allowed
 
     async def __call__(
@@ -18,10 +19,11 @@ class AllowlistMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        user = data.get("event_from_user")
-        if user is None or user.id not in self._allowed:
-            logging.info("dropped update from unauthorized user id=%s", getattr(user, "id", None))
-            return None
+        if self._allowed:
+            user = data.get("event_from_user")
+            if user is None or user.id not in self._allowed:
+                logging.info("dropped update from unauthorized user id=%s", getattr(user, "id", None))
+                return None
         return await handler(event, data)
 
 

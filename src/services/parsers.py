@@ -131,10 +131,45 @@ def parse_movie(html: HTMLParser, slug: str) -> MovieDetails:
     )
     details = MovieDetails(
         summary=summary,
-        imdb=_text(html, ".item.imdb strong"),
+        imdb=_parse_imdb(html),
         plot=_text(html, "div.plot"),
+        countries=_parse_countries(html),
     )
+    _parse_genres(html, summary)
     return _parse_download_box(html, details)
+
+
+def _parse_imdb(html: HTMLParser) -> str | None:
+    """The rating block renders as e.g. ``8/1017,204 رای`` — keep only the
+    ``X/Y`` rating, drop the vote count."""
+    raw = _text(html, ".item.imdb strong") or _text(html, ".item.imdb")
+    if not raw:
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", raw)
+    if match is None:
+        return None
+    return f"{match.group(0)}/10"
+
+
+def _parse_genres(html: HTMLParser, summary: MovieSummary) -> None:
+    if summary.genres:
+        return
+    holder = html.css_first(".genres_holder_single")
+    if holder is None:
+        return
+    summary.genres = [a.text(strip=True) for a in holder.css("a") if a.text(strip=True)]
+
+
+def _parse_countries(html: HTMLParser) -> list[str]:
+    for block in html.css(".stars"):
+        label = block.css_first(".label span")
+        if label is not None and "کشور" in label.text():
+            countries = [
+                (anchor.attributes.get("title") or anchor.text(strip=True)).strip()
+                for anchor in block.css(".list .item a")
+            ]
+            return [c for c in countries if c]
+    return []
 
 
 def _parse_download_box(html: HTMLParser, details: MovieDetails) -> MovieDetails:

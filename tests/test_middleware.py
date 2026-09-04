@@ -25,6 +25,16 @@ async def test_allowlisted_user_passes() -> None:
     handler.assert_awaited_once()
 
 
+async def test_empty_allowlist_lets_everyone_through() -> None:
+    handler = AsyncMock(return_value="ok")
+    mw = AllowlistMiddleware(allowed=set())
+    for user_id in (7, 999, 42):
+        handler.reset_mock()
+        result = await mw(handler, _message(user_id), _data(user_id))
+        assert result == "ok"
+        handler.assert_awaited_once()
+
+
 async def test_stranger_blocked() -> None:
     handler = AsyncMock()
     message = _message(7)

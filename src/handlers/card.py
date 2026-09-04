@@ -1,11 +1,16 @@
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InputRichMessage, Message
 
-from src.handlers.common import edit_card_content, edit_markup_safely, edit_text_safely
+from src.handlers.common import (
+    edit_card_content,
+    edit_markup_safely,
+    edit_rich_content,
+    edit_text_safely,
+)
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CallbackState
+from src.repos.state import CallbackState, CardEntry
 from src.services.formatting import (
     card_text,
     episode_caption,
@@ -16,6 +21,7 @@ from src.services.formatting import (
     root_keyboard,
     season_quality_keyboard,
 )
+from src.services.rich import rich_card_message, rich_episode_message
 from src.services.zarfilm import ZarfilmClient
 
 router = Router(name="card")
@@ -29,6 +35,7 @@ AUDIO_LINKS: dict[str, str] = {"orig": "originals", "dub": "dubs"}
 @router.callback_query(F.data.startswith("m:"))
 async def open_card(
     callback: CallbackQuery,
+    bot: Bot,
     zarfilm: ZarfilmClient,
     cache: TTLCache,
     card_state: CallbackState,
@@ -47,10 +54,23 @@ async def open_card(
         await cache.set(page_key, details, cfg.page_ttl)
     entry.details = details
     has_links = bool(details.originals or details.dubs or details.seasons)
+    markup = root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None
+    # Bot API 10.1 rich card: poster + centered borderless metadata table +
+    # centered story pull-quote in a single new message
+    try:
+        await bot.send_rich_message(
+            chat_id=callback.message.chat.id,
+            rich_message=rich_card_message(details),
+            reply_markup=markup,
+        )
+        entry.rich = True
+        await callback.answer()
+        return
+    except TelegramBadRequest:
+        entry.rich = False  # older client/API — fall back to the classic card
     text = card_text(details) if has_links else f"{card_text(details)}\n\n⚠️ {NO_LINKS_TEXT}"
     poster = details.summary.poster_url
     if poster:
-        markup = root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None
         try:
             # a new poster message keeps the search list available for other results
             await callback.message.answer_photo(poster, caption=text, reply_markup=markup)
@@ -61,10 +81,27 @@ async def open_card(
     await edit_text_safely(
         callback.message,
         text,
-        reply_markup=root_keyboard(details, key, emoji_map=cfg.emoji) if has_links else None,
+        reply_markup=markup,
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+async def _render(
+    *,
+    bot: Bot,
+    message: Message,
+    entry: CardEntry,
+    rich_message: InputRichMessage,
+    classic_text: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    """Edit the card in place using the rich message when the card was opened
+    as rich, otherwise the classic caption/text. Keeps one message either way."""
+    if getattr(entry, "rich", False):
+        await edit_rich_content(bot, message, rich_message, reply_markup)
+    else:
+        await edit_card_content(message, classic_text, reply_markup)
 
 
 @router.callback_query(F.data.startswith("l:"))
@@ -88,7 +125,7 @@ async def choose_language(callback: CallbackQuery, card_state: CallbackState, cf
 
 
 @router.callback_query(F.data.startswith("s:"))
-async def choose_season(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+async def choose_season(callback: CallbackQuery, bot: Bot, card_state: CallbackState, cfg: Config, **_: object) -> None:
     parts = (callback.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit():
         await callback.answer(INVALID_PATH_TEXT, show_alert=True)
@@ -105,15 +142,20 @@ async def choose_season(callback: CallbackQuery, card_state: CallbackState, cfg:
     entry.selection = f"s:{idx_text}"
     entry.pack = None
     season = entry.details.seasons[idx]
-    await edit_markup_safely(
-        callback.message,
-        reply_markup=season_quality_keyboard(season.qualities, key, season_index=idx, emoji_map=cfg.emoji),
+    kb = season_quality_keyboard(season.qualities, key, season_index=idx, emoji_map=cfg.emoji)
+    await _render(
+        bot=bot,
+        message=callback.message,
+        entry=entry,
+        rich_message=rich_card_message(entry.details),
+        classic_text=card_text(entry.details),
+        reply_markup=kb,
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("bs:"))
-async def back_to_season(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+async def back_to_season(callback: CallbackQuery, bot: Bot, card_state: CallbackState, cfg: Config, **_: object) -> None:
     parts = (callback.data or "").split(":")
     if len(parts) != 3 or not parts[2].isdigit():
         await callback.answer(INVALID_PATH_TEXT, show_alert=True)
@@ -130,17 +172,19 @@ async def back_to_season(callback: CallbackQuery, card_state: CallbackState, cfg
     entry.selection = f"s:{idx_text}"
     entry.pack = None
     season = entry.details.seasons[idx]
-    # restore the card caption (episode view replaced it) and show qualities
-    await edit_card_content(
-        callback.message,
-        card_text(entry.details),
-        season_quality_keyboard(season.qualities, key, season_index=idx, emoji_map=cfg.emoji),
+    await _render(
+        bot=bot,
+        message=callback.message,
+        entry=entry,
+        rich_message=rich_card_message(entry.details),
+        classic_text=card_text(entry.details),
+        reply_markup=season_quality_keyboard(season.qualities, key, season_index=idx, emoji_map=cfg.emoji),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("q:"))
-async def choose_quality(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+async def choose_quality(callback: CallbackQuery, bot: Bot, card_state: CallbackState, cfg: Config, **_: object) -> None:
     parts = (callback.data or "").split(":")
     if len(parts) != 4 or not parts[3].isdigit():
         await callback.answer(INVALID_PATH_TEXT, show_alert=True)
@@ -164,14 +208,16 @@ async def choose_quality(callback: CallbackQuery, card_state: CallbackState, cfg
         if not pack.episodes:
             await callback.answer(NO_LINKS_TEXT, show_alert=True)
             return
-        # episode list lives on the same card message — paginated, never a
-        # separate message
+        # episode list lives on the same card message — never a separate one
         entry.selection = f"s:{season_index}"
         entry.pack = idx
-        await edit_card_content(
-            callback.message,
-            episode_caption(pack, season, page=0),
-            episode_keyboard(pack, key, season_index, page=0),
+        await _render(
+            bot=bot,
+            message=callback.message,
+            entry=entry,
+            rich_message=rich_episode_message(pack, season),
+            classic_text=episode_caption(pack, season, page=0),
+            reply_markup=episode_keyboard(pack, key, season_index, page=0),
         )
         await callback.answer()
         return
@@ -190,7 +236,7 @@ async def choose_quality(callback: CallbackQuery, card_state: CallbackState, cfg
 
 
 @router.callback_query(F.data.startswith("e:"))
-async def flip_episode_page(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+async def flip_episode_page(callback: CallbackQuery, bot: Bot, card_state: CallbackState, cfg: Config, **_: object) -> None:
     parts = (callback.data or "").split(":")
     if len(parts) != 4 or not parts[2].isdigit() or not (parts[3].isdigit() or parts[3] == "i"):
         await callback.answer(INVALID_PATH_TEXT, show_alert=True)
@@ -220,16 +266,21 @@ async def flip_episode_page(callback: CallbackQuery, card_state: CallbackState, 
         return
     entry.selection = f"s:{season_text}"
     entry.pack = pack_index
-    await edit_card_content(
-        callback.message,
-        episode_caption(pack, season, page=page),
-        episode_keyboard(pack, key, season_index, page=page),
+    # rich messages fit the whole pack in one table, so only the classic path
+    # needs the page index
+    await _render(
+        bot=bot,
+        message=callback.message,
+        entry=entry,
+        rich_message=rich_episode_message(pack, season),
+        classic_text=episode_caption(pack, season, page=page),
+        reply_markup=episode_keyboard(pack, key, season_index, page=page),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("x:"))
-async def cancel(callback: CallbackQuery, card_state: CallbackState, cfg: Config, **_: object) -> None:
+async def cancel(callback: CallbackQuery, bot: Bot, card_state: CallbackState, cfg: Config, **_: object) -> None:
     key = (callback.data or "").removeprefix("x:")
     entry = card_state.get(key)
     if entry is None or entry.details is None:
@@ -237,10 +288,13 @@ async def cancel(callback: CallbackQuery, card_state: CallbackState, cfg: Config
         return
     entry.selection = ""
     entry.pack = None
-    await edit_card_content(
-        callback.message,
-        card_text(entry.details),
-        root_keyboard(entry.details, key, emoji_map=cfg.emoji),
+    await _render(
+        bot=bot,
+        message=callback.message,
+        entry=entry,
+        rich_message=rich_card_message(entry.details),
+        classic_text=card_text(entry.details),
+        reply_markup=root_keyboard(entry.details, key, emoji_map=cfg.emoji),
     )
     await callback.answer()
 

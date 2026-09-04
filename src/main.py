@@ -23,7 +23,7 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
 
     allowed = set(config.allowed_user_ids or [])
     if not allowed:
-        logging.warning("ALLOWED_USER_IDS is empty — the bot will reject every user, including the owner")
+        logging.info("ALLOWED_USER_IDS is empty — the bot is OPEN TO EVERY user")
     if resolve_owner(config) is None:
         logging.warning("no owner configured — /login and session-expiry alerts are disabled")
     dp.message.middleware(AllowlistMiddleware(allowed))

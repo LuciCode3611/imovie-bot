@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -87,6 +88,7 @@ class _StubZarfilm:
 @pytest.fixture
 def deps() -> dict[str, object]:
     return {
+        "bot": AsyncMock(),
         "cache": AsyncMock(),
         "card_state": CallbackState(ttl=60),
         "zarfilm": AsyncMock(),
@@ -118,30 +120,43 @@ async def test_quality_choice_movie_edits_to_file_buttons(deps: dict[str, object
     assert kb.inline_keyboard[0][0].url == "https://dl.example.com/f.mkv"
 
 
-async def test_quality_choice_series_edits_episode_list_into_card(deps: dict[str, object]) -> None:
-    entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0")
+async def test_quality_choice_series_edits_rich_card(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0", rich=True)
+    key = deps["card_state"].create(entry)
+    bot = deps["bot"]
+    message = AsyncMock()
+    message.chat = SimpleNamespace(id=1)
+    message.message_id = 5
+    await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
+    # episodes are edited into the same rich message — never as new messages
+    message.answer.assert_not_awaited()
+    bot.edit_message_text.assert_awaited_once()
+    kw = bot.edit_message_text.await_args.kwargs
+    assert kw["rich_message"] is not None
+    kb = kw["reply_markup"]
+    assert kb.inline_keyboard[-1][0].callback_data == f"bs:{key}:0"
+    assert entry.selection == "s:0" and entry.pack == 0
+
+    # back returns to the season quality keyboard and restores the card
+    bot.edit_message_text = AsyncMock()
+    await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
+    kw = bot.edit_message_text.await_args.kwargs
+    assert kw["rich_message"] is not None
+    back_kb = kw["reply_markup"]
+    assert back_kb.inline_keyboard[0][0].callback_data == f"q:{key}:s:0"
+
+
+async def test_quality_choice_series_classic_card_edits_caption(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_series_details().summary, details=_series_details(), selection="s:0", rich=False)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
     message.content_type = "text"
     message.edit_text = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    # episodes are rendered in the same message — never as new messages
-    message.answer.assert_not_awaited()
+    deps["bot"].edit_message_text.assert_not_awaited()
     message.edit_text.assert_awaited_once()
     text = message.edit_text.await_args.args[0]
-    assert "S01E01" in text and "فصل اول" in text and "قسمت" in text
-    kb = message.edit_text.await_args.kwargs["reply_markup"]
-    assert kb.inline_keyboard[-1][0].callback_data == f"bs:{key}:0"
-    assert entry.selection == "s:0" and entry.pack == 0
-
-    # back returns to the season quality keyboard and restores the caption
-    message.edit_text = AsyncMock()
-    await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
-    back_text = message.edit_text.await_args.args[0]
-    assert back_text.startswith("📺") and "S01E01" not in back_text
-    back_kb = message.edit_text.await_args.kwargs["reply_markup"]
-    assert back_kb.inline_keyboard[0][0].callback_data == f"q:{key}:s:0"
+    assert "S01E01" in text and "فصل اول" in text
 
 
 async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) -> None:
@@ -151,47 +166,46 @@ async def test_real_series_card_drilldown_from_fixture(deps: dict[str, object]) 
     deps["zarfilm"].movie = AsyncMock(return_value=details)
     entry = CardEntry(summary=details.summary)
     key = deps["card_state"].create(entry)
+    bot = deps["bot"]
     message = AsyncMock()
-    message.content_type = "text"
-    message.edit_text = AsyncMock()
-    message.answer_photo = AsyncMock(
-        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="photo rejected")
-    )
+    message.chat = SimpleNamespace(id=1)
+    message.message_id = 9
     await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
-    text = message.edit_text.await_args.args[0]
-    assert text.startswith("📺 سریال | Lanterns")
-    root_kb = message.edit_text.await_args.kwargs["reply_markup"]
+    bot.send_rich_message.assert_awaited_once()
+    sent = bot.send_rich_message.await_args.kwargs
+    root_kb = sent["reply_markup"]
     assert root_kb.inline_keyboard[0][0].text.startswith("📂 فصل 1 - ")
     assert root_kb.inline_keyboard[0][0].text.endswith("قسمت")
+    # the rich card contains a centered borderless table + pullquote + poster
+    block_types = [b.type for b in sent["rich_message"].blocks]
+    assert "table" in block_types and "pullquote" in block_types
+    assert entry.rich is True
 
-    message.edit_reply_markup = AsyncMock()
     await card.choose_season(_cb(f"s:{key}:0", message), **deps)  # type: ignore[arg-type]
-    season_kb = message.edit_reply_markup.await_args.kwargs["reply_markup"]
-    assert season_kb.inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
+    season_kw = bot.edit_message_text.await_args.kwargs
+    assert season_kw["rich_message"] is not None
+    assert season_kw["reply_markup"].inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
 
-    message.content_type = "text"
-    message.edit_text = AsyncMock()
+    bot.edit_message_text = AsyncMock()
     await card.choose_quality(_cb(f"q:{key}:s:0", message), **deps)  # type: ignore[arg-type]
-    # episodes are edited into the same card message, not sent as new ones
     message.answer.assert_not_awaited()
-    episode_text = message.edit_text.await_args.args[0]
-    assert "S01E01" in episode_text
-    episode_kb = message.edit_text.await_args.kwargs["reply_markup"]
-    # copy-all button + back button present
+    ep_kw = bot.edit_message_text.await_args.kwargs
+    rich_blocks = [b.type for b in ep_kw["rich_message"].blocks]
+    assert "table" in rich_blocks
+    episode_kb = ep_kw["reply_markup"]
     flat = [btn for row in episode_kb.inline_keyboard for btn in row]
     assert any("کپی لینک" in btn.text and btn.copy_text is not None for btn in flat)
     assert flat[-1].text.startswith("🔙 بازگشت") and flat[-1].callback_data == f"bs:{key}:0"
 
-    # back returns to the season quality keyboard and restores the caption
-    message.edit_text = AsyncMock()
+    # back returns to the season quality keyboard
+    bot.edit_message_text = AsyncMock()
     await card.back_to_season(_cb(f"bs:{key}:0", message), **deps)  # type: ignore[arg-type]
-    back_kb = message.edit_text.await_args.kwargs["reply_markup"]
-    assert back_kb.inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
-    assert message.edit_text.await_args.args[0].startswith("📺 سریال | Lanterns")
+    back_kw = bot.edit_message_text.await_args.kwargs
+    assert back_kw["reply_markup"].inline_keyboard[0][0].text.endswith("1080p - 2.2 GB")
 
 
-async def test_cancel_returns_to_root(deps: dict[str, object]) -> None:
-    entry = CardEntry(summary=_movie_details().summary, details=_movie_details(), selection="dub", pack=1)
+async def test_cancel_returns_to_root_classic(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_movie_details().summary, details=_movie_details(), selection="dub", pack=1, rich=False)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
     message.content_type = "text"
@@ -199,6 +213,20 @@ async def test_cancel_returns_to_root(deps: dict[str, object]) -> None:
     await card.cancel(_cb(f"x:{key}", message), **deps)  # type: ignore[arg-type]
     message.edit_text.assert_awaited_once()
     kb = message.edit_text.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == f"l:{key}:orig"
+    assert entry.selection == "" and entry.pack is None
+
+
+async def test_cancel_returns_to_root_rich(deps: dict[str, object]) -> None:
+    entry = CardEntry(summary=_movie_details().summary, details=_movie_details(), selection="dub", pack=1, rich=True)
+    key = deps["card_state"].create(entry)
+    bot = deps["bot"]
+    message = AsyncMock()
+    message.chat = SimpleNamespace(id=1)
+    message.message_id = 3
+    await card.cancel(_cb(f"x:{key}", message), **deps)  # type: ignore[arg-type]
+    bot.edit_message_text.assert_awaited_once()
+    kb = bot.edit_message_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].callback_data == f"l:{key}:orig"
     assert entry.selection == "" and entry.pack is None
 
@@ -212,12 +240,14 @@ async def test_expired_key_alerts(deps: dict[str, object]) -> None:
 
 
 async def test_season_quality_button_labels_use_pack_quality(deps: dict[str, object]) -> None:
-    entry = CardEntry(summary=_series_details().summary, details=_series_details())
+    entry = CardEntry(summary=_series_details().summary, details=_series_details(), rich=False)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
-    message.edit_reply_markup = AsyncMock()
+    message.content_type = "text"
+    message.edit_text = AsyncMock()
     await card.choose_season(_cb(f"s:{key}:0", message), **deps)  # type: ignore[arg-type]
-    kb = message.edit_reply_markup.await_args.kwargs["reply_markup"]
+    # classic card: markup edit only
+    kb = message.edit_text.await_args.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].text.endswith("1080p")
     assert kb.inline_keyboard[0][0].callback_data == f"q:{key}:s:0"
 
@@ -300,13 +330,55 @@ async def test_receive_cookie_without_session_cookie_rejects(
     fsm.clear.assert_not_awaited()
 
 
+async def test_open_card_sends_rich_message(deps: dict[str, object]) -> None:
+    details = _series_details()
+    entry = CardEntry(summary=details.summary)
+    key = deps["card_state"].create(entry)
+    deps["cache"].get = AsyncMock(return_value=None)
+    deps["zarfilm"].movie = AsyncMock(return_value=details)
+    bot = deps["bot"]
+    message = AsyncMock()
+    message.chat = SimpleNamespace(id=777)
+    await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
+    bot.send_rich_message.assert_awaited_once()
+    kw = bot.send_rich_message.await_args.kwargs
+    assert kw["chat_id"] == 777 and kw["rich_message"] is not None
+    assert kw["reply_markup"] is not None
+    # classic paths not used
+    message.answer_photo.assert_not_awaited()
+    assert entry.rich is True
+
+
+async def test_open_card_falls_back_to_classic_when_rich_unsupported(deps: dict[str, object]) -> None:
+    details = _movie_details()
+    details.summary.poster_url = "https://img.example.com/poster.jpg"
+    entry = CardEntry(summary=details.summary)
+    key = deps["card_state"].create(entry)
+    deps["cache"].get = AsyncMock(return_value=None)
+    deps["zarfilm"].movie = AsyncMock(return_value=details)
+    bot = deps["bot"]
+    bot.send_rich_message = AsyncMock(
+        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="rich unsupported")
+    )
+    message = AsyncMock()
+    message.answer_photo = AsyncMock()
+    await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
+    message.answer_photo.assert_awaited_once()
+    assert entry.rich is False
+
+
 async def test_open_card_without_links_shows_no_links_text(deps: dict[str, object]) -> None:
     empty = MovieDetails(summary=MovieSummary(slug="f-2014", title_en="F", kind=MediaKind.MOVIE))
     entry = CardEntry(summary=empty.summary)
     key = deps["card_state"].create(entry)
     deps["cache"].get = AsyncMock(return_value=None)
     deps["zarfilm"].movie = AsyncMock(return_value=empty)
+    # rich unsupported AND no poster → edits the (search) text message
+    deps["bot"].send_rich_message = AsyncMock(
+        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="rich unsupported")
+    )
     message = AsyncMock()
+    message.content_type = "text"
     message.edit_text = AsyncMock()
     await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
     message.edit_text.assert_awaited_once()
@@ -332,7 +404,7 @@ async def test_long_episode_pack_is_paginated_in_the_same_message(deps: dict[str
     ]
     details = _series_details()
     details.seasons[0].qualities[0].episodes = episodes
-    entry = CardEntry(summary=details.summary, details=details, selection="s:0")
+    entry = CardEntry(summary=details.summary, details=details, selection="s:0", rich=False)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
     message.content_type = "text"
@@ -391,39 +463,40 @@ async def test_malformed_callback_data_alerts_instead_of_crashing(deps: dict[str
         assert "نامعتبر" in cb.answer.await_args.args[0]
 
 
-async def test_open_card_with_poster_sends_photo_and_keeps_search_list(deps: dict[str, object]) -> None:
+async def test_open_card_rich_message_contains_poster_and_buttons(deps: dict[str, object]) -> None:
     details = _movie_details()
     details.summary.poster_url = "https://img.example.com/poster.jpg"
     entry = CardEntry(summary=details.summary)
     key = deps["card_state"].create(entry)
     deps["cache"].get = AsyncMock(return_value=None)
     deps["zarfilm"].movie = AsyncMock(return_value=details)
+    bot = deps["bot"]
     message = AsyncMock()
-    message.answer_photo = AsyncMock()
-    message.edit_text = AsyncMock()
+    message.chat = SimpleNamespace(id=1)
     await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
-    message.answer_photo.assert_awaited_once()
-    args = message.answer_photo.await_args.args
-    kwargs = message.answer_photo.await_args.kwargs
-    assert args[0] == "https://img.example.com/poster.jpg"
-    assert kwargs["caption"].startswith("🎬")
-    assert "فیلم" in kwargs["caption"]
-    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"l:{key}:orig"
+    bot.send_rich_message.assert_awaited_once()
+    rich = bot.send_rich_message.await_args.kwargs["rich_message"]
+    block_types = [getattr(b, "type", None) for b in rich.blocks]
+    assert "photo" in block_types
+    kb = bot.send_rich_message.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == f"l:{key}:orig"
     message.edit_text.assert_not_awaited()
 
 
-async def test_open_card_poster_failure_falls_back_to_text_card(deps: dict[str, object]) -> None:
-    from aiogram.methods import SendPhoto
-
+async def test_open_card_fallback_photo_failure_uses_text_card(deps: dict[str, object]) -> None:
     details = _movie_details()
     details.summary.poster_url = "https://img.example.com/broken.jpg"
     entry = CardEntry(summary=details.summary)
     key = deps["card_state"].create(entry)
     deps["cache"].get = AsyncMock(return_value=None)
     deps["zarfilm"].movie = AsyncMock(return_value=details)
+    deps["bot"].send_rich_message = AsyncMock(
+        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="rich unsupported")
+    )
     message = AsyncMock()
+    message.content_type = "text"
     message.answer_photo = AsyncMock(
-        side_effect=TelegramBadRequest(method=SendPhoto(chat_id=1, photo="x"), message="Bad Request: wrong file identifier")
+        side_effect=TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message="wrong file identifier")
     )
     message.edit_text = AsyncMock()
     await card.open_card(_cb(f"m:{key}", message), **deps)  # type: ignore[arg-type]
@@ -433,9 +506,9 @@ async def test_open_card_poster_failure_falls_back_to_text_card(deps: dict[str, 
 
 async def test_series_episode_flow_edits_photo_caption_not_new_messages(deps: dict[str, object]) -> None:
     details = _series_details()
-    # a poster means the card is a photo message — episodes must edit its caption
+    # classic (non-rich) photo card — episodes must edit its caption
     details.summary.poster_url = "https://img.example.com/poster.jpg"
-    entry = CardEntry(summary=details.summary, details=details, selection="s:0")
+    entry = CardEntry(summary=details.summary, details=details, selection="s:0", rich=False)
     key = deps["card_state"].create(entry)
     message = AsyncMock()
     message.content_type = "photo"

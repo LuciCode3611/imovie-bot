@@ -71,6 +71,21 @@ async def edit_card_content(message: Message, text: str, reply_markup: Any) -> N
     await edit_text_safely(message, text, reply_markup=reply_markup, parse_mode="HTML")
 
 
+async def edit_rich_content(bot: Bot, message: Message, rich_message: Any, reply_markup: Any) -> None:
+    """Edit a Bot API 10.1 rich message in place (body via rich_message)."""
+    try:
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            text=None,
+            rich_message=rich_message,
+            reply_markup=reply_markup,
+        )
+    except TelegramBadRequest as exc:
+        if NOT_MODIFIED_MARKER not in (exc.message or ""):
+            raise
+
+
 def _requester_id(target: Message | CallbackQuery | None) -> int | None:
     user = getattr(target, "from_user", None)
     return user.id if user is not None and isinstance(user.id, int) else None

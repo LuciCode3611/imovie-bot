@@ -28,9 +28,10 @@ def test_movie_metadata_from_public_page() -> None:
     assert details.summary.title_fa == "میان‌ستاره‌ای"
     assert details.summary.year == 2014
     assert details.summary.kind is MediaKind.MOVIE
-    assert details.imdb == "8.6"
+    assert details.imdb == "8.6/10"
     assert details.plot and details.plot.startswith("در حالی که")
     assert details.summary.poster_url and "wp-content" in details.summary.poster_url
+    assert details.summary.genres and "علمی تخیلی" in details.summary.genres
 
 
 def test_parse_error_on_garbage() -> None:
