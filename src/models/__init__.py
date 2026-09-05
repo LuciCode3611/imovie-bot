@@ -9,6 +9,12 @@ from src.models.movie import (
     Season,
     SeriesStatus,
 )
+from src.models.subtitle import (
+    SubtitleDetails,
+    SubtitleFile,
+    SubtitlePack,
+    SubtitleSummary,
+)
 
 __all__ = [
     "Config",
@@ -20,4 +26,8 @@ __all__ = [
     "QualityPack",
     "Season",
     "SeriesStatus",
+    "SubtitleDetails",
+    "SubtitleFile",
+    "SubtitlePack",
+    "SubtitleSummary",
 ]

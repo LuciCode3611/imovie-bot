@@ -8,18 +8,20 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
-from src.handlers import admin, card, common, requests, search
+from src.handlers import admin, card, common, requests, search, subtitle_card, subtitle_search
 from src.handlers.middleware import AllowlistMiddleware, SearchLockMiddleware
 from src.models.config import Config, resolve_owner
 from src.repos.cache import TTLCache
 from src.repos.db import Database
 from src.repos.state import CallbackState
+from src.services.subkade import SubkadeClient
 from src.services.zarfilm import ZarfilmClient
 
 
 def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     dp = Dispatcher(storage=MemoryStorage())
     zarfilm = ZarfilmClient(config)
+    subkade = SubkadeClient(config)
     cache = TTLCache()
     card_state = CallbackState(ttl=config.state_ttl)
     db = Database(config.db_path)
@@ -31,11 +33,14 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
         logging.warning("no owner configured — /login and session-expiry alerts are disabled")
     dp.message.middleware(AllowlistMiddleware(allowed, db))
     dp.callback_query.middleware(AllowlistMiddleware(allowed, db))
-    search.router.message.middleware(SearchLockMiddleware())
+    search_lock = SearchLockMiddleware()
+    search.router.message.middleware(search_lock)
+    subtitle_search.router.message.middleware(search_lock)
 
     deps = {
         "cfg": config,
         "zarfilm": zarfilm,
+        "subkade": subkade,
         "cache": cache,
         "card_state": card_state,
         "db": db,
@@ -43,8 +48,12 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     dp.include_router(admin.router)
     dp.include_router(common.router)
     dp.include_router(requests.router)
+    # subtitle search must precede the movie search router: the latter owns the
+    # catch-all «first tap search» hint for free text outside any state
+    dp.include_router(subtitle_search.router)
     dp.include_router(search.router)
     dp.include_router(card.router)
+    dp.include_router(subtitle_card.router)
     dp.workflow_data.update(deps)
     return dp, zarfilm
 
@@ -52,6 +61,7 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
 USER_COMMANDS = [
     BotCommand(command="start", description="شروع و منوی اصلی"),
     BotCommand(command="search", description="جستجوی فیلم، سریال یا انیمه"),
+    BotCommand(command="subtitle", description="جستجوی زیرنویس فارسی"),
 ]
 OWNER_COMMANDS = [
     *USER_COMMANDS,
@@ -92,6 +102,9 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await zarfilm.close()
+        subkade: SubkadeClient | None = dp.workflow_data.get("subkade")
+        if subkade is not None:
+            await subkade.close()
         await bot.session.close()
 
 

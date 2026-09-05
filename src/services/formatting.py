@@ -11,8 +11,10 @@ from src.models import (
     MovieDetails,
     QualityPack,
     Season,
+    SubtitleDetails,
+    SubtitlePack,
 )
-from src.repos.state import CardEntry
+from src.repos.state import CardEntry, SubtitleCardEntry
 
 PLOT_LIMIT = 300
 TELEGRAM_MESSAGE_LIMIT = 4096
@@ -92,7 +94,10 @@ def results_keyboard(
 
 def welcome_keyboard(is_owner: bool = False) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY)]
+        [
+            InlineKeyboardButton(text="🔍 جستجو", callback_data="srch:go", style=ButtonStyle.PRIMARY),
+            InlineKeyboardButton(text="📝 جستجوی زیرنویس", callback_data="srch:sub_go", style=ButtonStyle.SUCCESS),
+        ]
     ]
     if is_owner:
         rows.append(
@@ -388,3 +393,107 @@ def apply_icon(text: str, role: str, emoji_map: dict[str, str], **button_kwargs:
     if icon:
         return InlineKeyboardButton(text=text, icon_custom_emoji_id=icon, **button_kwargs)
     return InlineKeyboardButton(text=f"{FALLBACK_ICONS.get(role, '')} {text}".strip(), **button_kwargs)
+
+
+# --- subtitles (subkade.ir) -------------------------------------------------
+
+SUBTITLE_PLOT_LIMIT = 260
+
+
+def subtitle_results_keyboard(
+    pairs: list[tuple[str, SubtitleCardEntry]],
+    page: int,
+    page_count: int,
+    search_key: str,
+    emoji_map: dict[str, str] | None = None,
+) -> InlineKeyboardMarkup:
+    """Same layout as the movie results: one button per result plus the
+    ◀ 1/3 ▶ navigation row (spg: pages, sm: opens a subtitle card)."""
+    rows = [[_subtitle_result_button(key, entry, emoji_map)] for key, entry in pairs]
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"spg:{search_key}:{page - 1}"))
+    if page_count > 1:
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{page_count}", callback_data=f"spg:{search_key}:i"))
+    if page < page_count - 1:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"spg:{search_key}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _subtitle_result_button(key: str, entry: SubtitleCardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
+    s = entry.summary
+    label = s.title_en + (f" ({s.year})" if s.year else "")
+    text = f"{kind_badge(s.kind)} {label}"
+    icon = (emoji_map or {}).get("result")
+    if icon:
+        return InlineKeyboardButton(text=text, icon_custom_emoji_id=icon, callback_data=f"sm:{key}", style=ButtonStyle.PRIMARY)
+    return InlineKeyboardButton(text=text, callback_data=f"sm:{key}", style=ButtonStyle.PRIMARY)
+
+
+def subtitle_root_keyboard(
+    details: SubtitleDetails,
+    key: str,
+    emoji_map: dict[str, str] | None = None,
+) -> InlineKeyboardMarkup:
+    """Card root: a movie with a single file gets the download button right
+    away; series (or multi-file posts) list their packs (seasons) first."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if len(details.packs) == 1 and details.packs[0].file_count == 1:
+        rows.append([_subtitle_file_button(details.packs[0].files[0].label, details.packs[0].files[0].url)])
+    else:
+        for idx, pack in enumerate(details.packs):
+            label = f"{pack.label} - {pack.file_count} فایل" if pack.file_count > 1 else pack.label
+            rows.append([_icon_button(label, "season", emoji_map, callback_data=f"sp:{key}:{idx}", style=ButtonStyle.PRIMARY)])
+    if details.summary.page_url:
+        rows.append([InlineKeyboardButton(text="🌐 صفحهٔ زیرنویس", url=details.summary.page_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subtitle_pack_keyboard(pack: SubtitlePack, key: str) -> InlineKeyboardMarkup:
+    rows = [[_subtitle_file_button(file.label, file.url)] for file in pack.files]
+    rows.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"sx:{key}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _subtitle_file_button(label: str, url: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=f"⬇ {label}", url=url)
+
+
+def subtitle_card_text(details: SubtitleDetails) -> str:
+    """Classic (non-rich) subtitle card caption, HTML parse mode."""
+    summary = details.summary
+    title = escape(summary.title_en)
+    if details.title_fa:
+        title += f" — {escape(details.title_fa)}"
+    year = f" ({summary.year})" if summary.year else ""
+    lines = [f"📝 زیرنویس فارسی {KIND_WORDS.get(summary.kind, '')} | {title}{year}"]
+    meta: list[str] = []
+    if details.imdb:
+        meta.append(f"⭐ {escape(details.imdb)}")
+    if details.airing:
+        meta.append("🟢 در حال پخش")
+    if details.genres:
+        meta.append("🎭 " + escape("، ".join(details.genres[:3])))
+    if meta:
+        lines.append(" · ".join(meta))
+    if details.translators:
+        lines.append(f"✍️ مترجم: {escape(details.translators)}")
+    if details.sync_note:
+        lines.append(f"🎯 {escape(details.sync_note)}")
+    if details.plot:
+        plot = details.plot
+        if len(plot) > SUBTITLE_PLOT_LIMIT:
+            plot = plot[:SUBTITLE_PLOT_LIMIT].rsplit(" ", 1)[0] + "…"
+        lines.append(f"📄 {escape(plot)}")
+    if details.packs:
+        count = details.file_count
+        lines.append(f"📦 {count} فایل زیرنویس در {len(details.packs)} بخش" if len(details.packs) > 1 else f"📦 {count} فایل زیرنویس")
+    return "\n".join(lines)
+
+
+def subtitle_pack_caption(details: SubtitleDetails, pack: SubtitlePack) -> str:
+    header = f"📂 {escape(details.summary.title_en)} · {escape(pack.label)} — {pack.file_count} فایل"
+    body = [f'<a href="{escape(file.url)}">{escape(file.label)}</a>' for file in pack.files]
+    return "\n".join([header, "", *body])

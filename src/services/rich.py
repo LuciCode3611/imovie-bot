@@ -23,7 +23,7 @@ from aiogram.types import (
     RichTextUrl,
 )
 
-from src.models import MovieDetails, QualityPack, Season
+from src.models import MovieDetails, QualityPack, Season, SubtitleDetails, SubtitlePack
 
 # rich messages cap at 32,768 chars / 500 blocks / 20 table columns — one
 # episode table per pack fits comfortably.
@@ -37,6 +37,8 @@ LABEL_EMOJI: dict[str, tuple[str, str]] = {
     "runtime": ("5458603043203327669", "⏱"),
     "genre": ("5397782960512444700", "🎭"),
     "cast": ("5217822164362739968", "🎬"),
+    "translator": ("5217822164362739968", "✍️"),
+    "sync": ("5458603043203327669", "🎯"),
 }
 
 
@@ -122,7 +124,75 @@ def rich_episode_message(
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 
+# --- subtitles (subkade.ir) -------------------------------------------------
+
+
+def _subtitle_info_table(details: SubtitleDetails) -> InputRichBlockTable:
+    summary = details.summary
+    fa_title = details.title_fa or summary.title_en
+    rows: list[list[RichBlockTableCell]] = [
+        [_text_cell(summary.title_en + (f" ({summary.year})" if summary.year else ""), header=True), _text_cell(fa_title, header=True)]
+    ]
+
+    def add(role: str, label: str, value: str | None) -> None:
+        if value:
+            rows.append([_label_cell(role, label), _text_cell(value)])
+
+    add("imdb", "امتیاز", details.imdb)
+    add("status", "وضعیت", "🟢 در حال پخش" if details.airing else None)
+    add("country", "محصول", "، ".join(details.countries) if details.countries else None)
+    add("genre", "ژانر", "، ".join(details.genres[:5]) if details.genres else None)
+    add("cast", "ستارگان", "، ".join(details.cast[:5]) if details.cast else None)
+    add("translator", "مترجم", details.translators)
+    add("sync", "هماهنگی", details.sync_note)
+    return InputRichBlockTable(is_bordered=False, is_striped=False, is_compact=True, cells=rows)
+
+
+def _subtitle_packs_table(details: SubtitleDetails) -> InputRichBlockTable:
+    """Overview of every free Persian pack with a tappable link per file —
+    the whole post fits one compact table (series: one row per season)."""
+    cells: list[list[RichBlockTableCell]] = [
+        [_text_cell("بخش", header=True), _text_cell("زیرنویس", header=True), _text_cell("دانلود", header=True)]
+    ]
+    for pack in details.packs:
+        for file in pack.files:
+            link = RichTextUrl(text="🔗 دریافت", url=file.url)
+            cells.append([_text_cell(pack.label), _text_cell(file.label), _cell(link)])
+    return InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells)
+
+
+def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
+    """Subtitle box: poster + metadata table + story + table of all packs."""
+    blocks: list = []
+    if details.summary.poster_url:
+        blocks.append(InputRichBlockPhoto(photo=InputMediaPhoto(media=details.summary.poster_url)))
+    blocks.append(_subtitle_info_table(details))
+    if details.plot:
+        blocks.append(InputRichBlockDivider())
+        blocks.append(InputRichBlockPullQuotation(text=details.plot))
+    if details.packs:
+        blocks.append(InputRichBlockDivider())
+        blocks.append(InputRichBlockSectionHeading(text=f"📝 زیرنویس فارسی — {details.file_count} فایل", size=2))
+        blocks.append(_subtitle_packs_table(details))
+    return InputRichMessage(blocks=blocks, is_rtl=True)
+
+
+def rich_subtitle_pack_message(details: SubtitleDetails, pack: SubtitlePack) -> InputRichMessage:
+    """One pack (season) opened: heading + compact table of its files."""
+    heading = f"📂 {details.summary.title_en} · {pack.label} — {pack.file_count} فایل"
+    cells: list[list[RichBlockTableCell]] = [[_text_cell("زیرنویس", header=True), _text_cell("دانلود", header=True)]]
+    for file in pack.files:
+        cells.append([_text_cell(file.label), _cell(RichTextUrl(text="🔗 دریافت", url=file.url))])
+    blocks: list = [
+        InputRichBlockSectionHeading(text=heading, size=2),
+        InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells),
+    ]
+    return InputRichMessage(blocks=blocks, is_rtl=True)
+
+
 __all__ = [
     "rich_card_message",
     "rich_episode_message",
+    "rich_subtitle_message",
+    "rich_subtitle_pack_message",
 ]

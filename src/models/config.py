@@ -26,6 +26,7 @@ class Config(BaseSettings):
     emoji: Annotated[dict[str, str] | None, NoDecode] = None
     proxy_url: str | None = None
     base_url: str = "https://zarfilm.com"
+    subkade_base_url: str = "https://subkade.ir"
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

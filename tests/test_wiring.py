@@ -24,6 +24,8 @@ def _detach_routers() -> Iterator[None]:
     from src.handlers import common as common_module
     from src.handlers import requests as requests_module
     from src.handlers import search as search_module
+    from src.handlers import subtitle_card as subtitle_card_module
+    from src.handlers import subtitle_search as subtitle_search_module
 
     for router in (
         common_module.router,
@@ -31,6 +33,8 @@ def _detach_routers() -> Iterator[None]:
         search_module.router,
         card_module.router,
         admin_module.router,
+        subtitle_search_module.router,
+        subtitle_card_module.router,
     ):
         router._parent_router = None
 
@@ -49,8 +53,8 @@ def test_build_dispatcher_injects_deps_and_routers() -> None:
 
     dp, zarfilm = build_dispatcher(_config())
     assert isinstance(dp, Dispatcher)
-    assert len(dp.sub_routers) == 5
-    assert {"cfg", "zarfilm", "cache", "card_state", "db"} <= set(dp.workflow_data)
+    assert len(dp.sub_routers) == 7
+    assert {"cfg", "zarfilm", "subkade", "cache", "card_state", "db"} <= set(dp.workflow_data)
     assert dp.workflow_data["cfg"] is not None
     assert dp.workflow_data["zarfilm"] is zarfilm
     assert isinstance(dp.workflow_data["cache"], TTLCache)

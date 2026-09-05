@@ -20,6 +20,7 @@ A private Telegram bot for finding movies and series: tap **جستجو**, type a
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels (roles: `original`, `dub`, `season`, `quality`, `result`). Roles without an ID — or an unset `EMOJI` — fall back to built-in unicode icons, so the bot never breaks either way |
    | `SESSION_PATH` | Optional path for the stored login session (default `session.json` in the working directory); in Docker, point it at a mounted volume |
    | `PROXY_URL` | Optional; if Telegram is blocked on the host, set this to your local proxy endpoint, e.g. `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809` |
+   | `SUBKADE_BASE_URL` | Optional; subtitle source origin (default `https://subkade.ir`) |
 
    > **Note:** When `ALLOWED_USER_IDS` is set, `OWNER_ID` alone does NOT grant access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in it or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`. **If `ALLOWED_USER_IDS` is empty the bot is OPEN TO EVERY user** (and logs an info line at startup); in that open mode set `OWNER_ID` explicitly if you want `/login` and session alerts.
 
@@ -34,6 +35,10 @@ A private Telegram bot for finding movies and series: tap **جستجو**, type a
 ## Search flow
 
 Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters a listening state («نام فیلم یا سریال رو بنویس…»), and the next message becomes the search query. Text sent while not listening just gets a hint with the button attached. The listening mode resets automatically after results or no-results, and `/start` clears it.
+
+## Subtitle search (subkade.ir)
+
+Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, searches [subkade.ir](https://subkade.ir/) and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — poster, metadata table (IMDb, genres, cast, translators, sync note), synopsis and a table with a «🔗 دریافت» link per Persian subtitle zip; series are grouped by season, and each season button lists its files as direct-download buttons. Only the free Persian archives on `dl1.subkade.ir` are scraped — the VIP-only English/Arabic lists are ignored. No login is required; the source domain can be overridden with `SUBKADE_BASE_URL`.
 
 ## Docker
 

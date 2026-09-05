@@ -157,13 +157,14 @@ def test_results_keyboard_nav_row_covers_all_pages() -> None:
             assert len(btn.callback_data.encode()) <= 64
 
 
-def test_welcome_keyboard_single_search_button() -> None:
+def test_welcome_keyboard_search_and_subtitle_buttons_side_by_side() -> None:
     kb = welcome_keyboard()
     assert len(kb.inline_keyboard) == 1
-    assert len(kb.inline_keyboard[0]) == 1
-    btn = kb.inline_keyboard[0][0]
-    assert btn.text == "🔍 جستجو" and btn.callback_data == "srch:go" and btn.style == "primary"
-    assert btn.icon_custom_emoji_id is None
+    assert len(kb.inline_keyboard[0]) == 2
+    search, subtitle = kb.inline_keyboard[0]
+    assert search.text == "🔍 جستجو" and search.callback_data == "srch:go" and search.style == "primary"
+    assert search.icon_custom_emoji_id is None
+    assert subtitle.callback_data == "srch:sub_go" and "زیرنویس" in subtitle.text
 
 
 def test_welcome_keyboard_shows_dashboard_only_for_owner() -> None:

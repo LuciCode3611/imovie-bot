@@ -2,7 +2,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-from src.models import MovieDetails, MovieSummary
+from src.models import MovieDetails, MovieSummary, SubtitleDetails, SubtitleSummary
 
 
 @dataclass
@@ -29,15 +29,44 @@ class SearchEntry:
         return len(self.pairs)
 
 
+@dataclass
+class SubtitleCardEntry:
+    """A subkade.ir subtitle post opened from the subtitle search results."""
+
+    summary: SubtitleSummary
+    details: SubtitleDetails | None = None
+    pack: int | None = None  # open pack (season) index, None = overview
+    rich: bool = False  # True once rendered as a Bot API 10.1 rich message
+
+
+@dataclass
+class SubtitleSearchEntry:
+    query: str
+    pairs: list[tuple[str, SubtitleCardEntry]] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.pairs)
+
+
+Entry = CardEntry | SearchEntry | SubtitleCardEntry | SubtitleSearchEntry
+
+
 class CallbackState:
     def __init__(self, ttl: int) -> None:
         self._ttl = ttl
-        self._data: dict[str, tuple[CardEntry | SearchEntry, float]] = {}
+        self._data: dict[str, tuple[Entry, float]] = {}
 
     def create(self, entry: CardEntry) -> str:
         return self._store(entry)
 
     def create_search(self, entry: SearchEntry) -> str:
+        return self._store(entry)
+
+    def create_subtitle(self, entry: SubtitleCardEntry) -> str:
+        return self._store(entry)
+
+    def create_subtitle_search(self, entry: SubtitleSearchEntry) -> str:
         return self._store(entry)
 
     def get(self, key: str) -> CardEntry | None:
@@ -48,16 +77,24 @@ class CallbackState:
         entry = self._load(key)
         return entry if isinstance(entry, SearchEntry) else None
 
+    def get_subtitle(self, key: str) -> SubtitleCardEntry | None:
+        entry = self._load(key)
+        return entry if isinstance(entry, SubtitleCardEntry) else None
+
+    def get_subtitle_search(self, key: str) -> SubtitleSearchEntry | None:
+        entry = self._load(key)
+        return entry if isinstance(entry, SubtitleSearchEntry) else None
+
     def drop(self, key: str) -> None:
         self._data.pop(key, None)
 
-    def _store(self, entry: CardEntry | SearchEntry) -> str:
+    def _store(self, entry: Entry) -> str:
         self._sweep()
         key = secrets.token_hex(3)
         self._data[key] = (entry, time.monotonic() + self._ttl)
         return key
 
-    def _load(self, key: str) -> CardEntry | SearchEntry | None:
+    def _load(self, key: str) -> Entry | None:
         item = self._data.get(key)
         if item is None:
             return None
