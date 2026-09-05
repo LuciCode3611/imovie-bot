@@ -285,7 +285,7 @@ async def admin_manage(
 
 
 async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None = None, subdl: SubdlClient | None = None) -> dict:
-    present = zarfilm._restore_session()  # loads any persisted session
+    present = zarfilm.restore_session()  # loads any persisted session
     valid: bool | None = None
     if present:
         try:
@@ -308,6 +308,7 @@ async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None
         "sub_enabled": subdl.enabled if subdl is not None else False,
         "sub_searches": subdl.stats.get("searches", 0) if subdl is not None else 0,
         "sub_titles": subdl.stats.get("titles", 0) if subdl is not None else 0,
+        "sub_downloads": subdl.stats.get("downloads", 0) if subdl is not None else 0,
     }
     if db is not None:
         stats.update(db.stats())

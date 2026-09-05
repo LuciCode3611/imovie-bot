@@ -18,6 +18,7 @@ from aiogram.types import (
 
 from src.repos.db import RequestRow, UserRow
 
+
 def persian_ttl(seconds: int | None) -> str | None:
     if seconds is None:
         return None
@@ -117,10 +118,17 @@ def requests_keyboard(requests: list[RequestRow], page: int, total: int) -> Inli
 
 def subtitle_status(stats: dict) -> str:
     """One line for the subtitle source: is the SubDL key there, and how much of
-    it has been used since startup (owner-only view, so the variable name is fine)."""
+    it has been used since startup (owner-only view, so the variable name is fine).
+
+    «کش» counts archives already uploaded to Telegram — those are re-sent by
+    file_id and never touch the source's per-IP download limit again.
+    """
     if not stats.get("sub_enabled"):
         return "🔴 غیرفعال — SUBDL_API_KEY تنظیم نشده"
-    return f"🟢 فعال — جستجو {stats.get('sub_searches', 0)} · عنوان {stats.get('sub_titles', 0)}"
+    return (
+        f"🟢 فعال — جستجو {stats.get('sub_searches', 0)} · عنوان {stats.get('sub_titles', 0)}"
+        f" · ارسال {stats.get('sub_downloads', 0)} · کش {stats.get('subtitle_files', 0)}"
+    )
 
 
 def overview_rich(stats: dict) -> InputRichMessage:

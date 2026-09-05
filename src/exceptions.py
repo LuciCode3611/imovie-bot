@@ -12,3 +12,11 @@ class SubdlError(Exception):
     and their own credentials, so a SubDL outage must never look like an expired
     zarfilm session. Messages never carry the API key or the request URL.
     """
+
+
+class ArchiveTooLargeError(SubdlError):
+    """A subtitle archive too big to upload through the Bot API (50 MB cap).
+
+    Raised while streaming, before the whole file is in memory; callers answer
+    with the public link instead.
+    """

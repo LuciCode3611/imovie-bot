@@ -69,7 +69,7 @@ class ZarfilmClient:
     async def session_valid(self) -> bool:
         """Live check: the home page shows the account menu only when logged
         in. Returns False on any transport error or when no session exists."""
-        if not self._restore_session() and not self._logged_in:
+        if not self.restore_session() and not self._logged_in:
             return False
         try:
             response = await self._get("/")
@@ -88,12 +88,17 @@ class ZarfilmClient:
     async def ensure_session(self) -> None:
         if self._logged_in:
             return
-        if self._restore_session():
+        if self.restore_session():
             self._logged_in = True
             return
         raise AuthError("no valid session — owner must send /login with a browser cookie")
 
-    def _restore_session(self) -> bool:
+    def restore_session(self) -> bool:
+        """Load a persisted session from disk, if it still holds a login cookie.
+
+        Public because the owner dashboard reports whether a session exists
+        without triggering a live check (see handlers/admin.py::_gather_stats).
+        """
         path = Path(self._cfg.session_path)
         if not path.exists():
             return False

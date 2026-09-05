@@ -64,6 +64,12 @@ class SubtitleDetails(BaseModel):
         return sum(pack.file_count for pack in self.packs)
 
     @property
+    def files(self) -> list[SubtitleFile]:
+        """Every file in keyboard order — a button's callback data is an index
+        into this list, so both sides must agree on the order."""
+        return [file for pack in self.packs for file in pack.files]
+
+    @property
     def season_labels(self) -> list[str]:
         """Season headings for a series card (empty for a movie)."""
         return [pack.label for pack in self.packs] if self.is_series else []

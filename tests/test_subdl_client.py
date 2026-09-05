@@ -9,11 +9,11 @@ from typing import Any
 import httpx
 import pytest
 
-from src.exceptions import SubdlError
+from src.exceptions import ArchiveTooLargeError, SubdlError
 from src.models import MediaKind, SubtitleSummary
 from src.models.config import Config
 from src.services import subdl as subdl_module
-from src.services.subdl import SUBS_PER_PAGE, SubdlClient
+from src.services.subdl import MAX_ARCHIVE_BYTES, SUBS_PER_PAGE, SubdlClient, archive_filename
 from src.services.subdl_parsers import SEARCH_PATH
 
 API_KEY = "sekret-key-do-not-leak"
@@ -260,3 +260,121 @@ async def test_uptime_is_reported_for_the_dashboard() -> None:
         assert client.uptime_seconds() >= 0
     finally:
         await client.close()
+
+
+# --- archive downloads -------------------------------------------------------
+
+ZIP_URL = "https://dl.subdl.com/subtitle/3197651-3213944.zip"
+ZIP_BYTES = b"PK\x03\x04" + b"persian subtitle payload"
+
+
+def _download_client(handler: Callable[[httpx.Request], httpx.Response]) -> tuple[SubdlClient, list[httpx.Request]]:
+    return _client(handler)
+
+
+async def test_fetch_archive_downloads_the_public_zip() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=ZIP_BYTES, headers={"Content-Disposition": 'attachment; filename="fa.zip"'})
+
+    client, sent = _download_client(handler)
+    try:
+        archive = await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+    assert archive.data == ZIP_BYTES and archive.size == len(ZIP_BYTES)
+    assert archive.filename == "fa.zip"
+    # the absolute url overrides the API base, and the key never travels with it
+    assert sent[0].url.host == "dl.subdl.com" and "api_key" not in str(sent[0].url)
+    assert client.stats["downloads"] == 1 and client.stats["requests"] == 0
+
+
+async def test_fetch_archive_names_the_file_from_the_url_when_no_disposition() -> None:
+    client, _ = _download_client(lambda request: httpx.Response(200, content=ZIP_BYTES))
+    try:
+        assert (await client.fetch_archive(ZIP_URL)).filename == "3197651-3213944.zip"
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    ("disposition", "url", "expected"),
+    [
+        ('attachment; filename="Dune.Persian.zip"', "https://x/1.zip", "Dune.Persian.zip"),
+        ("attachment; filename*=UTF-8''%D8%B2%DB%8C%D8%B1%D9%86%D9%88%DB%8C%D8%B3.zip", "https://x/1.zip", "زیرنویس.zip"),
+        ("attachment; filename=plain.zip", "https://x/1.zip", "plain.zip"),
+        ('attachment; filename="../../etc/passwd"', "https://x/1.zip", "passwd.zip"),
+        (None, "https://dl.subdl.com/subtitle/9-9.zip", "9-9.zip"),
+        (None, "https://dl.subdl.com/subtitle/", "subtitle.zip"),
+        ("garbage", "https://dl.subdl.com/subtitle/9-9.zip", "9-9.zip"),
+        (None, "https://dl.subdl.com/subtitle/no-extension", "no-extension.zip"),
+    ],
+)
+def test_archive_filename_prefers_the_disposition_and_strips_paths(disposition: str | None, url: str, expected: str) -> None:
+    assert archive_filename(disposition, url) == expected
+
+
+@pytest.mark.parametrize("status_code", [404, 429, 500])
+async def test_fetch_archive_raises_on_a_failed_download(status_code: int) -> None:
+    client, _ = _download_client(lambda request: httpx.Response(status_code, text="nope"))
+    try:
+        with pytest.raises(SubdlError, match=str(status_code)):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+async def test_fetch_archive_refuses_an_html_interstitial() -> None:
+    """Download hosts answer "limit reached" pages with a 200 — that must never
+    be uploaded to a user as a subtitle."""
+    client, _ = _download_client(lambda request: httpx.Response(200, text="<html>too many downloads</html>", headers={"Content-Type": "text/html; charset=utf-8"}))
+    try:
+        with pytest.raises(SubdlError, match="HTML"):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+async def test_fetch_archive_refuses_an_empty_body() -> None:
+    client, _ = _download_client(lambda request: httpx.Response(200, content=b"", headers={"Content-Type": "application/zip"}))
+    try:
+        with pytest.raises(SubdlError, match="empty"):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+async def test_a_declared_oversize_archive_is_rejected_before_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subdl_module, "MAX_ARCHIVE_BYTES", 1024)
+    client, _ = _download_client(lambda request: httpx.Response(200, content=b"x", headers={"Content-Length": "999999999"}))
+    try:
+        with pytest.raises(ArchiveTooLargeError):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+async def test_a_growing_archive_is_cut_off_mid_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No Content-Length: the cap is enforced while streaming, chunk by chunk."""
+    monkeypatch.setattr(subdl_module, "MAX_ARCHIVE_BYTES", 16)
+    client, _ = _download_client(lambda request: httpx.Response(200, content=b"x" * 5000))
+    try:
+        with pytest.raises(ArchiveTooLargeError):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+async def test_a_dead_download_host_raises_without_a_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    def dead(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route to host")
+
+    client, _ = _download_client(dead)
+    try:
+        with pytest.raises(SubdlError, match="ConnectError"):
+            await client.fetch_archive(ZIP_URL)
+    finally:
+        await client.close()
+
+
+def test_the_upload_cap_stays_below_telegrams_limit() -> None:
+    assert MAX_ARCHIVE_BYTES < 50 * 1024 * 1024

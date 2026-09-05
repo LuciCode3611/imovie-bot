@@ -73,7 +73,7 @@ def _detach_routers() -> Iterator[None]:
         subtitle_search_module.router,
         subtitle_card_module.router,
     ):
-        router._parent_router = None  # noqa: SLF001 - no public detach API in aiogram
+        router._parent_router = None  # no public detach API in aiogram
 
 
 def test_resolve_owner_prefers_owner_id() -> None:
