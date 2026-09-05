@@ -443,7 +443,7 @@ async def test_open_card_says_so_when_the_api_key_is_missing(deps: dict[str, Any
 
 async def test_dashboard_stats_include_the_subtitle_counters(tmp_path: Path) -> None:
     zarfilm = MagicMock()
-    zarfilm._restore_session.return_value = False
+    zarfilm.restore_session.return_value = False
     zarfilm.session_ttl_seconds.return_value = 0
     zarfilm.uptime_seconds.return_value = 5
     zarfilm.stats = {"searches": 1, "movies": 2}

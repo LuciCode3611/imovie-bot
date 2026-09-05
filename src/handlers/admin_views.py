@@ -18,6 +18,7 @@ from aiogram.types import (
 
 from src.repos.db import RequestRow, UserRow
 
+
 def persian_ttl(seconds: int | None) -> str | None:
     if seconds is None:
         return None

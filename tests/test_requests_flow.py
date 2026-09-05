@@ -1,15 +1,13 @@
 """User content-request flow: one tap on «ثبت درخواست» saves + confirms."""
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, User
 
-from src.handlers import card, requests as req
+from src.handlers import requests as req
 from src.models import MediaKind, MovieDetails, MovieSummary
 from src.repos.db import Database
 from src.repos.state import CallbackState, CardEntry

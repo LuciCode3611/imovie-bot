@@ -33,10 +33,9 @@ class AllowlistMiddleware(BaseMiddleware):
                 if isinstance(event, Message):
                     await event.answer(BLOCKED_TEXT)
                 return None
-        if self._allowed:
-            if user is None or user.id not in self._allowed:
-                logging.info("dropped update from unauthorized user id=%s", getattr(user, "id", None))
-                return None
+        if self._allowed and (user is None or user.id not in self._allowed):
+            logging.info("dropped update from unauthorized user id=%s", getattr(user, "id", None))
+            return None
         return await handler(event, data)
 
 

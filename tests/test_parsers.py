@@ -140,9 +140,8 @@ def test_series_status_detects_ended_and_ongoing() -> None:
 
 
 def test_anime_series_detected_as_series_with_status() -> None:
-    from src.services.parsers import _detect_kind
     from src.models import MediaKind, SeriesStatus
-    from src.services.parsers import _parse_series_status
+    from src.services.parsers import _detect_kind, _parse_series_status
 
     # anime ("دانلود انیمه ...") is a TV series, not a movie
     assert _detect_kind("دانلود انیمه Black Torch") is MediaKind.SERIES

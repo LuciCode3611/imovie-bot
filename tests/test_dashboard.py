@@ -60,7 +60,7 @@ async def test_dashboard_refresh_checks_session(tmp_path: Path) -> None:
     message = _msg()
     message.message_id = 7
     zarfilm = AsyncMock()
-    zarfilm._restore_session = lambda: True
+    zarfilm.restore_session = lambda: True
     zarfilm.session_ttl_seconds = lambda: 3600
     zarfilm.uptime_seconds = lambda: 60
     zarfilm.session_valid = AsyncMock(return_value=True)
