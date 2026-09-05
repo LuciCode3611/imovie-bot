@@ -1,6 +1,8 @@
 # Zarfilm Telegram Bot — Design
 
 Date: 2026-09-02
+Last updated: 2026-09-06 — subtitle subsystem (SubDL), SQLite persistence,
+document delivery
 Status: Draft for review
 Owner: rezal
 
@@ -21,6 +23,12 @@ Verified facts from probing (2026-09-02):
   once generated** and **not IP-bound** (owner verified by sharing a link).
 - Page generation takes ~4–5 s; caching matters for UX.
 
+The bot has since grown a second, independent source: **SubDL**
+(`api.subdl.com`) for Persian subtitles. Unlike zarfilm it is a documented JSON
+API behind an API key, so that half of the bot does no scraping and holds no
+session — and, because subtitle archives are small, it delivers the files
+themselves rather than links (§3, "Subtitle card & delivery spec").
+
 ## 2. Goals / Non-Goals
 
 **Goals (v1)**
@@ -33,9 +41,14 @@ Verified facts from probing (2026-09-02):
 
 **Non-Goals (v1)**
 
-- No re-uploading files into Telegram (Telegram file limits + bandwidth).
-- No database, no background crawler, no new-content alerts (natural v2; the
-  cache interface is designed so a SQLite index can replace it).
+- No re-uploading *movies or series* into Telegram (gigabytes, bandwidth, the
+  bot upload limit) — those stay direct links. Subtitle archives are the
+  deliberate exception: a few hundred KB, sent as documents and cached by
+  `file_id`.
+- No background crawler, no new-content alerts. The "no database" non-goal is
+  retired: `repos/db.py` is a small SQLite store (users, blocks, content
+  requests, subtitle `file_id` cache); the in-memory `TTLCache` still fronts
+  both sources.
 - No public access, no multi-account pool, no captcha-solving.
 
 ## 3. Architecture
@@ -77,6 +90,31 @@ Owns the one logged-in httpx session. Responsibilities:
 Pure functions from HTML/JSON-LD strings to Pydantic models. No I/O, fully
 unit-testable against saved fixture pages.
 
+**`services/subdl.py` — SubdlClient** + **`services/subdl_parsers.py`**
+
+Second source: no session, no scraping, JSON only.
+
+- `search(query)` → `GET /api/v1/subtitles?film_name=…&languages=FA`;
+  `details(summary)` → the same endpoint keyed by `sd_id`, with `full_season=1`
+  for series (retried once without it when the title has no season pack) so a
+  season arrives as one zip instead of 30 single-episode files.
+- Persian only, twice over: `languages=FA` on the wire *and* an `is_persian()`
+  filter on the parsed rows, because the API does not always honour the
+  parameter.
+- `fetch_archive(url)` → streams one public `dl.subdl.com` zip: 40 MB cap
+  (Bot API allows 50 MB), HTML answers rejected, 3 concurrent slots, 60 s
+  timeout. Download URLs are absolute, so they bypass the API base URL and
+  never carry the key.
+- Disabled without `SUBDL_API_KEY`: `enabled` is False and the handlers say so
+  instead of firing a request the API would reject; the rest of the bot is
+  unaffected.
+- `SubdlError` sits outside the `ZarfilmError` tree on purpose — a SubDL outage
+  must never read as an expired zarfilm session. `ArchiveTooLargeError` extends
+  it for the one failure that has a different user-facing answer.
+- Parsers are pure functions over the payload (no I/O), tested against inline
+  JSON rather than committed fixtures: the response shape is small and stable,
+  and CI must not depend on reaching a third-party API.
+
 **`services/formatting.py`**
 
 Models → Telegram HTML (RTL Persian, parse mode `HTML`) and inline keyboard
@@ -113,11 +151,45 @@ series episode list.
   plain-text emoji so buttons never fail to render. Owner supplies concrete
   IDs during implementation.
 
+**Subtitle card & delivery spec**
+
+- Search results page exactly like the movie flow (5 per page, `◀ 1/3 ▶`), then
+  a rich card (Bot API 10.1 centered metadata table: title, year, movie/series,
+  seasons, file count) with one blue «دانلود …» button per file. The card is
+  never edited — a *new* message carries it — so the results list survives, and
+  there is no season sub-view: a season with several archives simply gets
+  several buttons («فصل 1 · همه قسمت‌ها», «فصل 1 · قسمت 1–3», …).
+- Buttons are callbacks (`sdl:{6-hex key}:{index}`, the index into
+  `SubtitleDetails.files`), never URLs — so no source host and no API key can
+  reach a message. Clients that predate rich messages get the plain-text card.
+- A tap sends the archive as a **document**, renamed
+  `«{title} ({year}) — {label}.zip»` (unsafe characters stripped, 100-char cap)
+  with a two-line caption, served from:
+  1. the cached Telegram `file_id` — instant, free, and it does not count
+     against SubDL's anonymous 300/day-per-IP limit;
+  2. a fresh download + upload (`upload_document` chat action covers both),
+     caching the returned `file_id`;
+  3. a «🔗 لینک مستقیم دانلود» link button when the archive is oversized or
+     either side fails — never a bare error.
+
 **`repos/cache.py` — TTLCache**
 
 `asyncio`-safe in-memory key→value with per-entry TTL (searches: 1 h, movie
 pages: 6 h) behind a tiny `Cache` protocol, so v2 can swap in SQLite without
 touching callers.
+
+**`repos/db.py` — Database**
+
+SQLite (stdlib `sqlite3`, one connection behind a lock): users + block list,
+search counters, owner-visible content requests, and `subtitle_files`
+(`url` PRIMARY KEY → Telegram `file_id` + timestamp). That last table is what
+makes document delivery cheap — `file_id`s are bot-specific but reusable across
+chats and do not expire, so each archive is downloaded from SubDL at most once
+per database. It also absorbs the quota shift: downloads now come from the
+*server's* IP (a shared one on Railway), not the user's. Production needs a
+persistent volume for `DB_PATH`; without it the cache resets on every redeploy.
+A `file_id` Telegram stops accepting is dropped and the archive re-uploaded
+once, so a rotated bot token heals itself.
 
 **`handlers/`**
 
@@ -170,8 +242,17 @@ card button tap → callback handler → CallbackState lookup (short key)
   → انصراف: revert to card root
 ```
 
+```
+subtitle text → subtitle_search handler → SubdlClient.search (FA) → cache
+  → up to 5 title buttons; tap → SubdlClient.details (sd_id) → cache
+  → rich card (new message) + one callback button per file
+  → tap → cached file_id? re-send : fetch_archive → send document → cache id
+  → oversize / SubDL error / upload error → link button as the fallback
+```
+
 Re-scraping happens only on cache miss (search 1 h, movie pages 6 h); all
-drill-down taps reuse the already-parsed page.
+drill-down taps reuse the already-parsed page. Subtitle archives go one better:
+after the first delivery they never leave Telegram's storage again.
 
 ### Session & anti-detection posture
 
@@ -193,6 +274,11 @@ solving.
 | Non-allowlisted user | Terse rejection; nothing executes |
 | Callback for expired/unknown state key | "منقضی شده، دوباره جستجو کن" + prompt to re-search |
 | Series quality with zero parsed episodes | Generic error, logged with HTML sample |
+| `SUBDL_API_KEY` missing | Subtitle flow answers «غیرفعال»; dashboard names the variable; movies unaffected |
+| SubDL 4xx/5xx, quota, transport error | `SubdlError` → terse Persian text, logged as a warning (no traceback) |
+| Subtitle archive over 40 MB | `ArchiveTooLargeError` → public-link button instead of a document |
+| Subtitle download or upload failed | Public-link button; the card and the results list stay intact |
+| Cached `file_id` rejected (`TelegramBadRequest`) | Row dropped from `subtitle_files`, archive re-uploaded once |
 
 ## 5. Security
 
@@ -203,6 +289,13 @@ solving.
 - Source privacy: the scraped site is never named in user-facing messages,
   errors, or button labels — friends see a neutral "movie bot"; the source
   appears only inside the download URLs themselves.
+- `SUBDL_API_KEY` comes from the environment only and never appears in a card,
+  a URL, a log line or an error message. Card buttons are callbacks, so the one
+  place a SubDL URL can surface is the deliberate link fallback — built by
+  `public_zip_url()`, which strips the query string (where a key would ride).
+- Downloaded archives are size-capped *while streaming*, so a mislabelled or
+  hostile file cannot exhaust the container's memory, and HTML answers are
+  rejected so a "limit reached" interstitial is never uploaded as a subtitle.
 - Repo contains no credentials; log files excluded from git.
 
 ## 6. Testing
@@ -219,7 +312,16 @@ solving.
   revert.
 - **Handlers**: aiogram's dispatcher test utilities for allowlist, debounce,
   and error middleware.
-- Manual acceptance: live run against zarfilm before each milestone.
+- **SubdlClient**: httpx `MockTransport` over inline JSON — search, details,
+  the `full_season` retry, and `fetch_archive` (declared and mid-stream size
+  cap, HTML body, empty body, dead host, `Content-Disposition`/URL naming).
+- **Subtitle flow**: keyboards, document naming + caption, cache hit/miss/
+  stale-id, every fallback branch, and an end-to-end routing test through the
+  real dispatcher asserting the document's bytes/filename/caption *and* that a
+  second tap makes no HTTP request at all.
+- Manual acceptance: live run against zarfilm before each milestone. SubDL
+  needs a live key, so its acceptance check is one real query + one real
+  document delivery against Telegram.
 
 ## 7. Deployment
 
