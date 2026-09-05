@@ -38,7 +38,7 @@ Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters
 
 ## Subtitle search (subkade.ir)
 
-Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, searches [subkade.ir](https://subkade.ir/) and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — poster, metadata table (IMDb, genres, cast, translators, sync note), synopsis and a table with a «🔗 دریافت» link per Persian subtitle zip; series are grouped by season, and each season button lists its files as direct-download buttons. Only the free Persian archives on `dl1.subkade.ir` are scraped — the VIP-only English/Arabic lists are ignored. No login is required; the source domain can be overridden with `SUBKADE_BASE_URL`.
+Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, searches [subkade.ir](https://subkade.ir/) and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — poster, metadata table (IMDb, genres, cast, sync note) and synopsis; series are grouped by season, and each season button lists its files as blue «دانلود …» buttons. The card never links back to the source page. Only the free Persian archives on `dl1.subkade.ir` are scraped — the VIP-only English/Arabic lists are ignored. No login is required; the source domain can be overridden with `SUBKADE_BASE_URL`.
 
 ## Docker
 

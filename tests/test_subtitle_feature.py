@@ -166,11 +166,19 @@ def test_subtitle_results_keyboard_single_page_has_no_nav() -> None:
 
 
 def test_root_keyboard_single_file_movie_is_a_direct_download_button() -> None:
+    from aiogram.enums.button_style import ButtonStyle
+
+    from src.services.formatting import SUBTITLE_DOWNLOAD_EMOJI_ID
+
     kb = subtitle_root_keyboard(_movie_details(), "k1")
     first = kb.inline_keyboard[0][0]
     assert first.url == "https://dl1.subkade.ir/a.zip" and first.callback_data is None
-    assert first.text.startswith("⬇")
-    assert kb.inline_keyboard[-1][0].url == "https://subkade.ir/persian-subtitle-title-1/"
+    assert first.text.startswith("دانلود")
+    assert first.style == ButtonStyle.PRIMARY
+    assert first.icon_custom_emoji_id == SUBTITLE_DOWNLOAD_EMOJI_ID
+    # the scraped page is never exposed to users
+    assert len(kb.inline_keyboard) == 1
+    assert not any(b.url and "subkade.ir/persian" in b.url for row in kb.inline_keyboard for b in row)
 
 
 def test_root_keyboard_series_lists_packs_then_pack_keyboard_lists_files() -> None:
@@ -191,7 +199,8 @@ def test_root_keyboard_series_lists_packs_then_pack_keyboard_lists_files() -> No
 def test_classic_texts_contain_metadata_and_links() -> None:
     text = subtitle_card_text(_movie_details())
     assert "Title 1" in text and "عنوان یک" in text and "8.7/10" in text
-    assert "غریبی" in text and "BluRay" in text and "1 فایل" in text
+    assert "BluRay" in text and "1 فایل" in text
+    assert "مترجم" not in text  # translators are not part of the card anymore
     series = _series_details()
     assert "در حال پخش" in subtitle_card_text(series)
     caption = subtitle_pack_caption(series, series.packs[1])
@@ -205,18 +214,16 @@ def _blocks(rich) -> list[dict]:
     return rich.model_dump(exclude_none=True)["blocks"]
 
 
-def test_rich_subtitle_message_has_poster_info_table_story_and_packs_table() -> None:
+def test_rich_subtitle_message_has_poster_info_table_and_story() -> None:
     rich = rich_subtitle_message(_series_details())
     assert rich.is_rtl is True
     types = [b["type"] for b in _blocks(rich)]
-    assert types == ["photo", "table", "divider", "pullquote", "divider", "heading", "table"]
-    info, packs = (b for b in _blocks(rich) if b["type"] == "table")
+    assert types == ["photo", "table", "divider", "pullquote"]
+    info = next(b for b in _blocks(rich) if b["type"] == "table")
     assert info["cells"][0][0]["text"] == "Title 2 (2002)" and info["cells"][0][1]["text"] == "سریال دو"
-    # header + 3 files (one row per file, labelled by pack)
-    assert len(packs["cells"]) == 4
-    assert packs["cells"][2][0]["text"] == "فصل 2"
-    link = packs["cells"][2][2]["text"]
-    assert isinstance(link, dict) and link["url"] == "https://dl1.subkade.ir/s02a.zip"
+    # no translator row, and the download links live in the buttons only
+    labels = [cell["text"] for row in info["cells"] for cell in row if isinstance(cell["text"], str)]
+    assert "مترجم" not in " ".join(labels)
 
 
 def test_rich_subtitle_message_without_poster_or_plot() -> None:
@@ -224,7 +231,7 @@ def test_rich_subtitle_message_without_poster_or_plot() -> None:
     details.summary.poster_url = None
     details.plot = None
     types = [b["type"] for b in _blocks(rich_subtitle_message(details))]
-    assert types == ["table", "divider", "heading", "table"]
+    assert types == ["table"]
 
 
 def test_rich_pack_message_lists_pack_files() -> None:

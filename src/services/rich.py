@@ -37,7 +37,6 @@ LABEL_EMOJI: dict[str, tuple[str, str]] = {
     "runtime": ("5458603043203327669", "⏱"),
     "genre": ("5397782960512444700", "🎭"),
     "cast": ("5217822164362739968", "🎬"),
-    "translator": ("5217822164362739968", "✍️"),
     "sync": ("5458603043203327669", "🎯"),
 }
 
@@ -143,26 +142,12 @@ def _subtitle_info_table(details: SubtitleDetails) -> InputRichBlockTable:
     add("country", "محصول", "، ".join(details.countries) if details.countries else None)
     add("genre", "ژانر", "، ".join(details.genres[:5]) if details.genres else None)
     add("cast", "ستارگان", "، ".join(details.cast[:5]) if details.cast else None)
-    add("translator", "مترجم", details.translators)
     add("sync", "هماهنگی", details.sync_note)
     return InputRichBlockTable(is_bordered=False, is_striped=False, is_compact=True, cells=rows)
 
 
-def _subtitle_packs_table(details: SubtitleDetails) -> InputRichBlockTable:
-    """Overview of every free Persian pack with a tappable link per file —
-    the whole post fits one compact table (series: one row per season)."""
-    cells: list[list[RichBlockTableCell]] = [
-        [_text_cell("بخش", header=True), _text_cell("زیرنویس", header=True), _text_cell("دانلود", header=True)]
-    ]
-    for pack in details.packs:
-        for file in pack.files:
-            link = RichTextUrl(text="🔗 دریافت", url=file.url)
-            cells.append([_text_cell(pack.label), _text_cell(file.label), _cell(link)])
-    return InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells)
-
-
 def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
-    """Subtitle box: poster + metadata table + story + table of all packs."""
+    """Subtitle box: poster + metadata table + story (downloads live in the buttons)."""
     blocks: list = []
     if details.summary.poster_url:
         blocks.append(InputRichBlockPhoto(photo=InputMediaPhoto(media=details.summary.poster_url)))
@@ -170,10 +155,6 @@ def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
     if details.plot:
         blocks.append(InputRichBlockDivider())
         blocks.append(InputRichBlockPullQuotation(text=details.plot))
-    if details.packs:
-        blocks.append(InputRichBlockDivider())
-        blocks.append(InputRichBlockSectionHeading(text=f"📝 زیرنویس فارسی — {details.file_count} فایل", size=2))
-        blocks.append(_subtitle_packs_table(details))
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 

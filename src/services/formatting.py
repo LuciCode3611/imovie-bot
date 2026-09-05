@@ -446,8 +446,7 @@ def subtitle_root_keyboard(
         for idx, pack in enumerate(details.packs):
             label = f"{pack.label} - {pack.file_count} فایل" if pack.file_count > 1 else pack.label
             rows.append([_icon_button(label, "season", emoji_map, callback_data=f"sp:{key}:{idx}", style=ButtonStyle.PRIMARY)])
-    if details.summary.page_url:
-        rows.append([InlineKeyboardButton(text="🌐 صفحهٔ زیرنویس", url=details.summary.page_url)])
+    # no source-page button: the scraped domain stays invisible to users
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -457,8 +456,19 @@ def subtitle_pack_keyboard(pack: SubtitlePack, key: str) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+# custom emoji shown on every subtitle download button
+SUBTITLE_DOWNLOAD_EMOJI_ID = "5406745015365943482"
+
+
 def _subtitle_file_button(label: str, url: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=f"⬇ {label}", url=url)
+    """Blue (primary) download button, icon included when the bot may use one."""
+    text = label if label.startswith("دانلود") else f"دانلود {label}"
+    return InlineKeyboardButton(
+        text=text,
+        url=url,
+        style=ButtonStyle.PRIMARY,
+        icon_custom_emoji_id=SUBTITLE_DOWNLOAD_EMOJI_ID,
+    )
 
 
 def subtitle_card_text(details: SubtitleDetails) -> str:
@@ -478,8 +488,6 @@ def subtitle_card_text(details: SubtitleDetails) -> str:
         meta.append("🎭 " + escape("، ".join(details.genres[:3])))
     if meta:
         lines.append(" · ".join(meta))
-    if details.translators:
-        lines.append(f"✍️ مترجم: {escape(details.translators)}")
     if details.sync_note:
         lines.append(f"🎯 {escape(details.sync_note)}")
     if details.plot:
