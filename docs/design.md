@@ -162,15 +162,29 @@ series episode list.
 - Buttons are callbacks (`sdl:{6-hex key}:{index}`, the index into
   `SubtitleDetails.files`), never URLs — so no source host and no API key can
   reach a message. Clients that predate rich messages get the plain-text card.
-- A tap sends the archive as a **document**, renamed
-  `«{title} ({year}) — {label}.zip»` (unsafe characters stripped, 100-char cap)
-  with a two-line caption, served from:
+- A tap sends the archive as a **document inside a single rich message**,
+  renamed `«{title} ({year}) — {label}.zip»` (unsafe characters stripped,
+  100-char cap). Under it, in the same bubble, goes the one instruction every
+  archive needs — «زیرنویس را از حالت فشرده خارج کنید و داخل مدیا پلیر اضافه
+  کنید» — as a borderless, centered single-row table nested inside a *block*
+  quotation (`InputRichBlockBlockQuotation` is the only quotation block that can
+  nest another block; a pull quotation takes plain text). There is no caption: a
+  caption cannot hold a table, and the instruction is the same for every title,
+  season and episode, so per-file text added nothing.
+- Serving order:
   1. the cached Telegram `file_id` — instant, free, and it does not count
      against SubDL's anonymous 300/day-per-IP limit;
   2. a fresh download + upload (`upload_document` chat action covers both),
-     caching the returned `file_id`;
+     caching the returned `file_id` — read from `message.document` *or* from the
+     document block inside `message.rich_message`, whichever Telegram fills in;
   3. a «🔗 لینک مستقیم دانلود» link button when the archive is oversized or
      either side fails — never a bare error.
+- Degradation: if Telegram refuses a media block inside a rich message (older
+  client or API), the file is sent the classic way and the quoted note follows
+  as its own message, itself degrading to plain text when rich messages are
+  unavailable altogether. The zip is never lost — and a failure of the document
+  *itself* (an unknown `file_id`) still propagates, so the stale cache entry is
+  dropped and the archive re-uploaded rather than being reported as delivered.
 
 **`repos/cache.py` — TTLCache**
 
@@ -315,10 +329,12 @@ solving.
 - **SubdlClient**: httpx `MockTransport` over inline JSON — search, details,
   the `full_season` retry, and `fetch_archive` (declared and mid-stream size
   cap, HTML body, empty body, dead host, `Content-Disposition`/URL naming).
-- **Subtitle flow**: keyboards, document naming + caption, cache hit/miss/
-  stale-id, every fallback branch, and an end-to-end routing test through the
-  real dispatcher asserting the document's bytes/filename/caption *and* that a
-  second tap makes no HTTP request at all.
+- **Subtitle flow**: keyboards, document naming, the quoted unpack note (one
+  borderless centered row inside a blockquote), cache hit/miss/stale-id, every
+  fallback branch including the rich→plain-document→plain-text degradation, and
+  an end-to-end routing test through the real dispatcher asserting the uploaded
+  bytes/filename and the note's shape *and* that a second tap makes no HTTP
+  request at all.
 - Manual acceptance: live run against zarfilm before each milestone. SubDL
   needs a live key, so its acceptance check is one real query + one real
   document delivery against Telegram.

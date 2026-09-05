@@ -11,7 +11,16 @@ import pytest
 from aiogram.enums.button_style import ButtonStyle
 from aiogram.exceptions import TelegramBadRequest, TelegramServerError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message, User
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InputMediaDocument,
+    InputRichBlockBlockQuotation,
+    InputRichBlockDocument,
+    InputRichBlockTable,
+    Message,
+    User,
+)
 
 from src.exceptions import ArchiveTooLargeError, SubdlError
 from src.handlers import admin, search, subtitle_card, subtitle_search
@@ -25,13 +34,18 @@ from src.services.formatting import (
     BUTTON_TEXT_LIMIT,
     SUBTITLE_DOWNLOAD_EMOJI_ID,
     subtitle_card_text,
-    subtitle_document_caption,
     subtitle_document_name,
     subtitle_link_keyboard,
     subtitle_results_keyboard,
     subtitle_root_keyboard,
 )
-from src.services.rich import rich_subtitle_message
+from src.services.rich import (
+    SUBTITLE_UNPACK_HINT,
+    rich_subtitle_document_message,
+    rich_subtitle_hint_message,
+    rich_subtitle_message,
+    subtitle_hint_block,
+)
 from src.services.subdl import SubdlClient, SubtitleArchive
 
 DOWNLOAD = "https://dl.subdl.com/subtitle"
@@ -121,8 +135,11 @@ def _state() -> FSMContext:
 @pytest.fixture
 def deps(tmp_path: Path) -> dict[str, Any]:
     bot = AsyncMock()
-    # send_document must answer with a Message whose document carries a file_id
-    bot.send_document = AsyncMock(return_value=SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID)))
+    # both delivery paths must answer with a Message whose document carries a
+    # file_id: the rich message is primary, send_document is the fallback
+    sent_message = SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID), rich_message=None)
+    bot.send_rich_message = AsyncMock(return_value=sent_message)
+    bot.send_document = AsyncMock(return_value=sent_message)
     return {
         "bot": bot,
         "cache": TTLCache(),
@@ -498,11 +515,32 @@ def test_document_name_survives_odd_labels_and_urls() -> None:
     assert len(subtitle_document_name(details, huge)) <= 100
 
 
-def test_document_caption_names_the_title_and_the_archive() -> None:
-    details = _series_details()
-    caption = subtitle_document_caption(details, details.files[0])
-    assert caption.splitlines()[0] == "📝 زیرنویس فارسی سریال | Title 2 (2002)"
-    assert "همه قسمت‌ها" in caption.splitlines()[1]
+# --- the unpack instruction --------------------------------------------------
+
+
+def test_the_hint_is_a_borderless_centered_single_row_table_inside_a_quote() -> None:
+    quote = subtitle_hint_block()
+    assert isinstance(quote, InputRichBlockBlockQuotation)  # a pullquote cannot nest a table
+    (table,) = quote.blocks
+    assert isinstance(table, InputRichBlockTable)
+    assert table.is_bordered is False
+    assert len(table.cells) == 1 and len(table.cells[0]) == 1
+    cell = table.cells[0][0]
+    assert cell.text == SUBTITLE_UNPACK_HINT == "زیرنویس را از حالت فشرده خارج کنید و داخل مدیا پلیر اضافه کنید"
+    assert cell.align == "center" and cell.valign == "middle" and not cell.is_header
+
+
+def test_the_archive_and_the_hint_share_one_rtl_message() -> None:
+    message = rich_subtitle_document_message(InputMediaDocument(media="FID"))
+    assert message.is_rtl is True
+    document, quote = message.blocks
+    assert isinstance(document, InputRichBlockDocument) and document.document.media == "FID"
+    # the document block's own caption stays empty — the quote replaces it
+    assert document.caption is None
+    assert isinstance(quote, InputRichBlockBlockQuotation)
+    # the degraded shape carries the same note on its own
+    (block,) = rich_subtitle_hint_message().blocks
+    assert isinstance(block, InputRichBlockBlockQuotation)
 
 
 # --- handlers: document download ---------------------------------------------
@@ -524,11 +562,15 @@ async def test_download_uploads_the_archive_and_caches_its_file_id(deps: dict[st
     await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
 
     deps["subdl"].fetch_archive.assert_awaited_once_with(file.url)
-    deps["bot"].send_document.assert_awaited_once()
-    args, kwargs = deps["bot"].send_document.await_args.args, deps["bot"].send_document.await_args.kwargs
-    assert args[0] == 42 and isinstance(args[1], BufferedInputFile)
-    assert args[1].filename == "Title 1 (2001) — Interstellar.2014.1080p.BluRay.zip"
-    assert kwargs["caption"].startswith("📝 زیرنویس فارسی")
+    deps["bot"].send_rich_message.assert_awaited_once()
+    deps["bot"].send_document.assert_not_awaited()  # the classic path is only a fallback
+    args, kwargs = deps["bot"].send_rich_message.await_args.args, deps["bot"].send_rich_message.await_args.kwargs
+    assert args[0] == 42
+    document_block, quote_block = kwargs["rich_message"].blocks
+    uploaded = document_block.document.media
+    assert isinstance(uploaded, BufferedInputFile) and uploaded.data == ARCHIVE.data
+    assert uploaded.filename == "Title 1 (2001) — Interstellar.2014.1080p.BluRay.zip"
+    assert isinstance(quote_block, InputRichBlockBlockQuotation)
     # the upload is remembered: the next user never touches SubDL again
     assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
     cb.answer.assert_awaited_once_with()
@@ -541,23 +583,76 @@ async def test_download_reuses_a_cached_file_id_without_fetching(deps: dict[str,
     await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
 
     deps["subdl"].fetch_archive.assert_not_awaited()
-    args = deps["bot"].send_document.await_args.args
-    assert args[1] == CACHED_FILE_ID
+    deps["bot"].send_document.assert_not_awaited()
+    media = deps["bot"].send_rich_message.await_args.kwargs["rich_message"].blocks[0].document.media
+    assert media == CACHED_FILE_ID  # re-sent from Telegram's own storage
     assert deps["db"].subtitle_file_id(file.url) == CACHED_FILE_ID
 
 
+_STALE = TelegramBadRequest(method=AsyncMock(), message="Bad Request: wrong file identifier")
+
+
 async def test_a_stale_file_id_is_dropped_and_the_file_uploaded_again(deps: dict[str, Any]) -> None:
+    """A rejected id must not be mistaken for "rich messages unsupported": the
+    classic send fails too, which is what tells the handler to re-upload."""
     deps, data, file = _download_deps(deps)
     deps["db"].store_subtitle_file_id(file.url, "FID-STALE")
-    deps["bot"].send_document = AsyncMock(
-        side_effect=[TelegramBadRequest(method=AsyncMock(), message="Bad Request: wrong file identifier"), AsyncMock(document=SimpleNamespace(file_id=NEW_FILE_ID))]
-    )
+    ok = SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID), rich_message=None)
+    deps["bot"].send_rich_message = AsyncMock(side_effect=[_STALE, ok])
+    deps["bot"].send_document = AsyncMock(side_effect=[_STALE, ok])
     cb = _callback(data)
     await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
 
-    assert deps["bot"].send_document.await_count == 2
+    assert deps["bot"].send_rich_message.await_count == 2
+    assert deps["bot"].send_document.await_count == 1  # the stale attempt, before the fresh upload
     deps["subdl"].fetch_archive.assert_awaited_once_with(file.url)
     assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
+
+
+async def test_a_rejected_document_block_still_delivers_the_file_and_the_note(deps: dict[str, Any]) -> None:
+    """Older clients/API: the zip goes out as a plain document and the quoted
+    instruction follows as its own message."""
+    deps, data, file = _download_deps(deps)
+    unsupported = TelegramBadRequest(method=AsyncMock(), message="Bad Request: unsupported message block")
+    ok = SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID), rich_message=None)
+    deps["bot"].send_rich_message = AsyncMock(side_effect=[unsupported, ok])
+    deps["bot"].send_document = AsyncMock(return_value=ok)
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    args, kwargs = deps["bot"].send_document.await_args.args, deps["bot"].send_document.await_args.kwargs
+    assert args[0] == 42 and isinstance(args[1], BufferedInputFile)
+    assert "caption" not in kwargs  # the note is a quoted table, never a caption
+    hint = deps["bot"].send_rich_message.await_args_list[1].kwargs["rich_message"]
+    assert isinstance(hint.blocks[0], InputRichBlockBlockQuotation) and len(hint.blocks) == 1
+    assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
+    cb.message.answer.assert_not_awaited()  # no link fallback — the file was delivered
+
+
+async def test_without_rich_messages_the_note_degrades_to_plain_text(deps: dict[str, Any]) -> None:
+    deps, data, file = _download_deps(deps)
+    deps["bot"].send_rich_message = AsyncMock(side_effect=TelegramBadRequest(method=AsyncMock(), message="Bad Request: unknown method"))
+    deps["bot"].send_document = AsyncMock(return_value=SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID), rich_message=None))
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    deps["bot"].send_message.assert_awaited_once_with(42, SUBTITLE_UNPACK_HINT)
+    assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
+
+
+async def test_the_file_id_is_read_out_of_a_rich_message_response(deps: dict[str, Any]) -> None:
+    """Telegram may report the file on the message or only inside its blocks —
+    either way the cache must be filled, or every tap re-downloads."""
+    deps, data, file = _download_deps(deps)
+    blocks = [SimpleNamespace(document=SimpleNamespace(file_id="FID-FROM-BLOCKS"))]
+    deps["bot"].send_rich_message = AsyncMock(return_value=SimpleNamespace(document=None, rich_message=SimpleNamespace(blocks=blocks)))
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    assert deps["db"].subtitle_file_id(file.url) == "FID-FROM-BLOCKS"
+    # and a response carrying neither simply does not get cached
+    assert subtitle_card._sent_file_id(SimpleNamespace(document=None, rich_message=None)) is None
+    assert subtitle_card._sent_file_id(SimpleNamespace(document=None, rich_message=SimpleNamespace(blocks=[]))) is None
 
 
 @pytest.mark.parametrize(
@@ -598,6 +693,7 @@ async def test_download_rejects_an_unknown_index_and_malformed_data(deps: dict[s
         await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
         deps["subdl"].fetch_archive.assert_not_awaited()
         deps["bot"].send_document.assert_not_awaited()
+        deps["bot"].send_rich_message.assert_not_awaited()
     # a card that was never opened has no details to index into
     bare = deps["card_state"].create_subtitle(SubtitleCardEntry(summary=_summary()))
     cb = _callback(f"sdl:{bare}:0")

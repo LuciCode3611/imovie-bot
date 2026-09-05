@@ -12,11 +12,12 @@ import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import EditMessageText, SendDocument, SendMessage, SendRichMessage
-from aiogram.types import BufferedInputFile, Message, Update
+from aiogram.types import BufferedInputFile, InputRichBlockBlockQuotation, InputRichBlockDocument, Message, Update
 
 from src.handlers import search, subtitle_search
 from src.models import MovieSummary, SubtitleSummary
 from src.models.config import Config
+from src.services.rich import SUBTITLE_UNPACK_HINT
 from src.services.subdl import SubdlClient
 
 OWNER_ID = 42
@@ -127,7 +128,11 @@ def _build(tmp_path: Path):
     async def call(bot: Bot, method, timeout=None):
         sent.append(method)
         base = {"message_id": 1000 + len(sent), "date": 0, "chat": {"id": OWNER_ID, "type": "private"}}
-        if isinstance(method, SendDocument):
+        carries_file = isinstance(method, SendDocument) or (
+            isinstance(method, SendRichMessage)
+            and any(getattr(block, "type", None) == "document" for block in (method.rich_message.blocks or []))
+        )
+        if carries_file:
             base["document"] = {"file_id": DOCUMENT_FILE_ID, "file_unique_id": "u", "file_name": "subtitle.zip"}
             return Message.model_validate(base, context={"bot": bot})
         if isinstance(method, (SendMessage, SendRichMessage)):
@@ -251,13 +256,21 @@ async def test_subtitle_flow_end_to_end_against_a_mocked_subdl_api(tmp_path: Pat
         assert "dl.subdl.com" not in card and "api_key" not in card and "leaked-key" not in card
         assert buttons[0].text == "دانلود Interstellar.2014.1080p.BluRay"
 
-        # tap the download button: the zip arrives as a Telegram document
+        # tap the download button: the zip arrives as a document inside ONE rich
+        # message, with the unpack instruction quoted underneath it
         await dp.feed_update(bot, _callback_update(4, bot, buttons[0].callback_data))
-        document = [m for m in sent if isinstance(m, SendDocument)][-1]
-        assert isinstance(document.document, BufferedInputFile)
-        assert document.document.data == ZIP_BYTES
-        assert document.document.filename == "Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip"
-        assert document.caption.splitlines()[0] == "📝 زیرنویس فارسی فیلم | Interstellar (2014)"
+        delivery = [m for m in sent if isinstance(m, SendRichMessage)][-1]
+        assert delivery.rich_message.is_rtl is True
+        document_block, quote_block = delivery.rich_message.blocks
+        assert isinstance(document_block, InputRichBlockDocument)
+        uploaded = document_block.document.media
+        assert isinstance(uploaded, BufferedInputFile) and uploaded.data == ZIP_BYTES
+        assert uploaded.filename == "Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip"
+        assert isinstance(quote_block, InputRichBlockBlockQuotation)
+        (table,) = quote_block.blocks
+        assert table.is_bordered is False and len(table.cells) == 1 and len(table.cells[0]) == 1
+        assert table.cells[0][0].text == SUBTITLE_UNPACK_HINT
+        assert table.cells[0][0].align == "center" and not table.cells[0][0].is_header
         assert len(downloads) == 1 and downloads[0].url.host == "dl.subdl.com"
         assert "api_key" not in str(downloads[0].url)
 
@@ -266,7 +279,10 @@ async def test_subtitle_flow_end_to_end_against_a_mocked_subdl_api(tmp_path: Pat
         assert db.subtitle_file_id("https://dl.subdl.com/subtitle/11-22.zip") == DOCUMENT_FILE_ID
         await dp.feed_update(bot, _callback_update(5, bot, buttons[0].callback_data))
         assert len(downloads) == 1  # served from Telegram's own storage this time
-        assert [m for m in sent if isinstance(m, SendDocument)][-1].document == DOCUMENT_FILE_ID
+        replay = [m for m in sent if isinstance(m, SendRichMessage)][-1]
+        assert replay.rich_message.blocks[0].document.media == DOCUMENT_FILE_ID
+        # the classic send_document path is only a fallback — it was not needed
+        assert not [m for m in sent if isinstance(m, SendDocument)]
     finally:
         await client.close()
 
