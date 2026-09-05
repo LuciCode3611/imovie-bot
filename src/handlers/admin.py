@@ -17,6 +17,7 @@ from src.handlers import admin_views
 from src.models.config import Config, resolve_owner
 from src.repos.db import Database
 from src.services.parsers import filter_session_cookies, parse_cookies
+from src.services.subkade import SubkadeClient
 from src.services.zarfilm import ZarfilmClient
 
 router = Router(name="admin")
@@ -92,6 +93,7 @@ async def dashboard_action(
     zarfilm: ZarfilmClient,
     state: FSMContext,
     db: Database,
+    subkade: SubkadeClient | None = None,
 ) -> None:
     if not _is_owner(callback.from_user, cfg):
         await callback.answer("فقط برای مالک.", show_alert=True)
@@ -118,7 +120,7 @@ async def dashboard_action(
         return
 
     if action == "open":
-        stats = await _gather_stats(zarfilm, cfg, db)
+        stats = await _gather_stats(zarfilm, cfg, db, subkade)
         await _send_view(
             bot,
             callback.message,
@@ -131,16 +133,16 @@ async def dashboard_action(
 
     # default: check / refresh
     await callback.answer(CHECKING_TEXT)
-    stats = await _gather_stats(zarfilm, cfg, db)
+    stats = await _gather_stats(zarfilm, cfg, db, subkade)
     await _edit_overview(bot, callback.message, stats)
     await callback.answer(REFRESHED_TEXT)
 
 
 @router.message(F.text.startswith("/status"))
-async def dashboard(message: Message, bot: Bot, cfg: Config, zarfilm: ZarfilmClient, db: Database) -> None:
+async def dashboard(message: Message, bot: Bot, cfg: Config, zarfilm: ZarfilmClient, db: Database, subkade: SubkadeClient | None = None) -> None:
     if not _is_owner(message.from_user, cfg):
         return
-    stats = await _gather_stats(zarfilm, cfg, db)
+    stats = await _gather_stats(zarfilm, cfg, db, subkade)
     await _send_overview(bot, message, stats)
 
 
@@ -282,7 +284,7 @@ async def admin_manage(
     await callback.answer()
 
 
-async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None = None) -> dict:
+async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None = None, subkade: SubkadeClient | None = None) -> dict:
     present = zarfilm._restore_session()  # loads any persisted session
     valid: bool | None = None
     if present:
@@ -302,6 +304,9 @@ async def _gather_stats(zarfilm: ZarfilmClient, cfg: Config, db: Database | None
         "movies": zarfilm.stats.get("movies", 0),
         "open_mode": not bool(cfg.allowed_user_ids),
         "proxy": cfg.proxy_url,
+        # subkade counters are in-process only (no persisted aggregate yet)
+        "sub_searches": subkade.stats.get("searches", 0) if subkade is not None else 0,
+        "sub_pages": subkade.stats.get("pages", 0) if subkade is not None else 0,
     }
     if db is not None:
         stats.update(db.stats())

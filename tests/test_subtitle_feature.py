@@ -391,3 +391,30 @@ async def test_invalid_and_expired_pack_paths_alert(deps: dict[str, Any]) -> Non
             await subtitle_card.back_to_subtitle_root(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
         cb.answer.assert_awaited_once_with(subtitle_card.EXPIRED_TEXT, show_alert=True)
     deps["bot"].edit_message_text.assert_not_awaited()
+
+
+async def test_dashboard_stats_include_subkade_counters() -> None:
+    from unittest.mock import MagicMock
+
+    from src.handlers.admin import _gather_stats
+    from src.handlers.admin_views import overview_rich, overview_text
+    from src.models.config import Config
+
+    zarfilm = MagicMock()
+    zarfilm._restore_session.return_value = False
+    zarfilm.session_ttl_seconds.return_value = 0
+    zarfilm.uptime_seconds.return_value = 5
+    zarfilm.stats = {"searches": 1, "movies": 2}
+    subkade = MagicMock()
+    subkade.stats = {"requests": 4, "searches": 3, "pages": 2}
+    cfg = Config(bot_token="t", zarfilm_base_url="https://z")
+
+    stats = await _gather_stats(zarfilm, cfg, None, subkade)
+    assert stats["sub_searches"] == 3 and stats["sub_pages"] == 2
+    assert "📝 زیرنویس: جستجو 3 · صفحه 2" in overview_text(stats)
+    cells = [c.text for block in overview_rich(stats).blocks if hasattr(block, "cells") for row in block.cells for c in row]
+    assert "📝 3 / 2" in cells
+
+    # the dependency is optional: older call sites (and tests) omit it
+    stats = await _gather_stats(zarfilm, cfg)
+    assert stats["sub_searches"] == 0 and stats["sub_pages"] == 0

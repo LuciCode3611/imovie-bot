@@ -141,6 +141,7 @@ def overview_rich(stats: dict) -> InputRichMessage:
         [s("جستجوها (ربات)", header=True), s(f"🔍 {stats.get('searches', 0)}")],
         [s("جستجوها (کل کاربران)", header=True), s(f"📊 {stats.get('searches_total', 0)}")],
         [s("صفحه‌های باز شده", header=True), s(f"🎬 {stats.get('movies', 0)}")],
+        [s("زیرنویس (جستجو / صفحه)", header=True), s(f"📝 {stats.get('sub_searches', 0)} / {stats.get('sub_pages', 0)}")],
         [s("درخواست‌های باز", header=True), s(f"📥 {stats.get('requests_open', 0)}")],
         [s("کل درخواست‌ها", header=True), s(f"🗂 {stats.get('requests_total', 0)}")],
     ]
@@ -159,6 +160,7 @@ def overview_text(stats: dict) -> str:
         f"🚫 مسدود: {stats.get('blocked', 0)}",
         f"🔍 جستجوها: ربات {stats.get('searches', 0)} · کل {stats.get('searches_total', 0)}",
         f"🎬 صفحه‌های باز شده: {stats.get('movies', 0)}",
+        f"📝 زیرنویس: جستجو {stats.get('sub_searches', 0)} · صفحه {stats.get('sub_pages', 0)}",
         f"📥 درخواست‌های باز: {stats.get('requests_open', 0)} از {stats.get('requests_total', 0)}",
     ]
     return "\n".join(lines)

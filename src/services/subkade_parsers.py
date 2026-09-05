@@ -4,7 +4,8 @@ Page anatomy (WordPress theme, verified live):
 
 search  ``/?s=<q>``  → ``a.sk-query[href]`` cards with ``.sk-loop-image img`` and an ``h3`` title
 post    ``/<slug>/`` → ``h1`` «دانلود زیرنویس فیلم|سریال|انیمیشن ... Title 2014»,
-                       ``.sk-single-imdb`` «8.7 / 10», ``.sk-single-genre a``,
+                       ``.sk-single-imdb`` «8.7 / 10», ``.sk-single-current`` «هماهنگ با نسخه BluRay»,
+                       ``.sk-single-genre a``,
                        ``.sk-loop-live`` ribbon «در حال پخش» on airing series,
                        ``ul > li > p.text`` metadata rows (سال انتشار / محصول کشور / بازیگران / مترجمین),
                        ``#sk-download .sk-download-list.farsi li`` → ``p.season`` + ``p.description`` + ``a.link[href]``
@@ -28,6 +29,7 @@ DOWNLOAD_ITEM_SELECTOR = "li"
 DOWNLOAD_LINK_SELECTOR = "a.link"
 AIRING_SELECTOR = ".sk-loop-live"
 IMDB_SELECTOR = ".sk-single-imdb"
+SYNC_NOTE_SELECTOR = ".sk-single-current"
 GENRE_SELECTOR = ".sk-single-genre a"
 META_ROW_SELECTOR = "li > p.text"
 PLOT_SELECTOR = ".sk-single-content p"
@@ -226,8 +228,18 @@ def _parse_imdb(html: HTMLParser) -> str | None:
 
 
 def _parse_sync_note(html: HTMLParser) -> str | None:
-    for node in html.css("span, p, div"):
-        text = node.text(strip=True)
+    """«هماهنگ با نسخه BluRay» / «تمامی نسخه‌های سریال» — the theme's
+    ``.sk-single-current`` badge; falls back to a leaf-node text scan."""
+    node = html.css_first(SYNC_NOTE_SELECTOR)
+    if node is not None:
+        text = node.text(separator=" ", strip=True)
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            return text
+    for candidate in html.css("span, p, em, b, strong"):
+        if candidate.css_first("div, p, ul, li") is not None:
+            continue  # only leaf-ish nodes: never a container's concatenated text
+        text = candidate.text(strip=True)
         if text and len(text) <= 60 and any(marker in text for marker in SYNC_NOTE_MARKERS):
             return text
     return None

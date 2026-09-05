@@ -115,3 +115,45 @@ def test_detect_kind_and_slug_helpers() -> None:
     assert detect_kind("persian-subtitle-x", poster_url="https://s/x/Show-S02-217x325.webp") is MediaKind.SERIES
     assert detect_kind("interstellar-2014") is MediaKind.MOVIE
     assert slug_from_url("https://subkade.ir/persian-subtitle-breaking-bad/") == "persian-subtitle-breaking-bad"
+
+
+def test_sync_note_comes_from_badge_not_a_container() -> None:
+    html = HTMLParser(
+        """
+        <html><body>
+        <h1>دانلود زیرنویس فیلم Dune 2021</h1>
+        <div class="sk-single-rate">
+          <div class="sk-single-rate-number"><div class="sk-single-imdb"><svg></svg><span>8.0 / 10</span></div></div>
+          <div class="sk-single-view"><span>بازدید:</span><span>1 هـزار</span></div>
+          <div class="sk-single-current"><svg></svg><span>هماهنگ با نسخه WEB-DL</span></div>
+        </div>
+        <div id="sk-download"><div class="sk-download-list farsi"><ul>
+          <li><p class="description">زیرنویس فارسی فیلم</p><a class="link" href="https://dl1.subkade.ir/x/Dune-2021.zip">دانلود زیرنویس</a></li>
+        </ul></div></div>
+        </body></html>
+        """
+    )
+    details = parse_subtitle_page(html, "dune-2021")
+    assert details.sync_note == "هماهنگ با نسخه WEB-DL"
+    assert details.imdb == "8.0/10"
+    assert details.summary.year == 2021
+    assert details.plot is None and details.title_fa is None
+    assert details.packs[0].files[0].url.endswith("Dune-2021.zip")
+
+
+def test_post_without_free_persian_pack_yields_no_packs() -> None:
+    html = HTMLParser(
+        """
+        <html><body>
+        <h1>دانلود زیرنویس فیلم Locked 2026</h1>
+        <div id="sk-download">
+          <div class="sk-download-list english"><ul>
+            <li><p class="description">برای دانلود زیرنویس انگلیسی، می‌بایست اشتراک ویژه تهیه نمایید.</p><a class="link vip" href="https://subkade.ir/account/vip/">خرید اشتراک</a></li>
+          </ul></div>
+        </div>
+        </body></html>
+        """
+    )
+    details = parse_subtitle_page(html, "locked-2026")
+    assert details.packs == []
+    assert details.file_count == 0
