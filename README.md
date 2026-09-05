@@ -41,7 +41,11 @@ Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters
 
 Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, calls the [SubDL API](https://subdl.com/api-doc) for **Persian (`FA`) subtitles only**, and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — a centered metadata table with the title, year, movie/series kind, seasons and file count — and **every subtitle file gets its own blue «دانلود …» button** under the card. There is no season sub-view, so the card never changes: a season with several archives simply gets one button per archive.
 
-Tapping a button **sends the subtitle as a Telegram document** — renamed to something readable (`Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip`) with a short caption. No download URL appears anywhere on the card, so neither the source host nor the API key is exposed; the key only ever authenticates the bot's own API calls.
+Tapping a button **sends the subtitle as a Telegram document** — renamed to something readable (`Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip`) — in a single rich message, with the one instruction every archive needs quoted underneath it in a borderless, centered table:
+
+> زیرنویس را از حالت فشرده خارج کنید و داخل مدیا پلیر اضافه کنید
+
+There is no caption: a caption can't hold a table, and the instruction is the same for every title. On a client old enough to refuse a media block inside a rich message, the file is sent the classic way and the note follows as its own message — the zip is never lost. No download URL appears anywhere on the card, so neither the source host nor the API key is exposed; the key only ever authenticates the bot's own API calls.
 
 Each tap is served in this order:
 

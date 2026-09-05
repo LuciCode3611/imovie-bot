@@ -10,8 +10,11 @@ classic photo card (see src/handlers/card.py).
 """
 
 from aiogram.types import (
+    InputMediaDocument,
     InputMediaPhoto,
+    InputRichBlockBlockQuotation,
     InputRichBlockDivider,
+    InputRichBlockDocument,
     InputRichBlockPhoto,
     InputRichBlockPullQuotation,
     InputRichBlockSectionHeading,
@@ -147,8 +150,58 @@ def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
     return InputRichMessage(blocks=[_subtitle_info_table(details)], is_rtl=True)
 
 
+# --- delivering a subtitle archive -------------------------------------------
+
+# The one instruction that travels with every delivered subtitle. It replaces
+# the old per-file caption: what a user needs to know is how to *use* the zip,
+# and that is the same for every title, season and episode.
+SUBTITLE_UNPACK_HINT = "زیرنویس را از حالت فشرده خارج کنید و داخل مدیا پلیر اضافه کنید"
+
+
+def subtitle_hint_table() -> InputRichBlockTable:
+    """The instruction as a borderless, centered single-row table."""
+    return InputRichBlockTable(
+        is_bordered=False,
+        is_striped=False,
+        is_compact=True,
+        cells=[[_cell(SUBTITLE_UNPACK_HINT)]],
+    )
+
+
+def subtitle_hint_block() -> InputRichBlockBlockQuotation:
+    """The instruction inside a quote.
+
+    A *block* quotation is the only quotation block that can nest another block
+    (a pull quotation takes plain text), which is what lets the table live
+    inside the quote rather than beside it.
+    """
+    return InputRichBlockBlockQuotation(blocks=[subtitle_hint_table()])
+
+
+def rich_subtitle_document_message(document: InputMediaDocument) -> InputRichMessage:
+    """One bubble: the archive itself, then the unpack instruction under it.
+
+    The document block's own caption is ignored by Telegram, so nothing is set —
+    the file name carries the title and the quote carries the instruction.
+    """
+    return InputRichMessage(
+        blocks=[InputRichBlockDocument(document=document), subtitle_hint_block()],
+        is_rtl=True,
+    )
+
+
+def rich_subtitle_hint_message() -> InputRichMessage:
+    """The instruction on its own — the shape used when a document cannot ride
+    inside a rich message (older client or API), so the note still arrives."""
+    return InputRichMessage(blocks=[subtitle_hint_block()], is_rtl=True)
+
+
 __all__ = [
     "rich_card_message",
     "rich_episode_message",
+    "rich_subtitle_document_message",
+    "rich_subtitle_hint_message",
     "rich_subtitle_message",
+    "subtitle_hint_block",
+    "subtitle_hint_table",
 ]

@@ -530,11 +530,3 @@ def subtitle_document_name(details: SubtitleDetails, file: SubtitleFile, fallbac
     if len(name) > DOCUMENT_NAME_LIMIT:
         name = name[: DOCUMENT_NAME_LIMIT - len(extension)].rstrip(" .") + extension
     return name
-
-
-def subtitle_document_caption(details: SubtitleDetails, file: SubtitleFile) -> str:
-    """Short HTML caption that travels with the sent document."""
-    summary = details.summary
-    year = f" ({summary.year})" if summary.year else ""
-    kind = KIND_WORDS.get(summary.kind, "")
-    return f"📝 زیرنویس فارسی {kind} | {escape(summary.title_en)}{year}\n📦 {escape(file.label)}"
