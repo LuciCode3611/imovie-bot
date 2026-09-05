@@ -24,8 +24,8 @@ USER_AGENT = (
 class ZarfilmClient:
     def __init__(self, config: Config, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._cfg = config
-        self._client = httpx.AsyncClient(
-            base_url=BASE_URL,
+        self._client = httpx.AsyncClient(   
+            base_url=config.base_url,
             headers={"User-Agent": USER_AGENT},
             timeout=20.0,
             follow_redirects=True,
