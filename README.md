@@ -41,11 +41,19 @@ Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters
 
 Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, calls the [SubDL API](https://subdl.com/api-doc) for **Persian (`FA`) subtitles only**, and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — a centered metadata table with the title, year, movie/series kind, seasons and file count — and **every subtitle file gets its own blue «دانلود …» button** under the card. There is no season sub-view, so the card never changes: a season with several archives simply gets one button per archive.
 
-Downloads are **public zip links**: the API answers with a path (`/subtitle/<id>.zip`) that the bot joins onto `dl.subdl.com`, dropping any query string. The API key authenticates the bot's own searches and never travels in a button, so users can copy and share the links freely (SubDL limits anonymous downloads to 300/day per IP, which lands on the user's connection, not the server's).
+Tapping a button **sends the subtitle as a Telegram document** — renamed to something readable (`Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip`) with a short caption. No download URL appears anywhere on the card, so neither the source host nor the API key is exposed; the key only ever authenticates the bot's own API calls.
+
+Each tap is served in this order:
+
+1. **Cached `file_id`** — if that archive was uploaded before, Telegram re-sends it from its own storage: instant, no bandwidth, and it does not touch SubDL's download limit. The cache is a SQLite table (`DB_PATH`) keyed by the download URL.
+2. **Download + upload** — otherwise the bot fetches the public `dl.subdl.com` zip (streamed, capped at 40 MB, HTML "limit reached" interstitials rejected) and uploads it as a document, then remembers the `file_id`.
+3. **Link fallback** — if the file is too large, SubDL refuses (404/429), or Telegram rejects the upload, the user gets a «🔗 لینک مستقیم دانلود» button instead of an error, so nobody leaves empty-handed.
+
+> **Quota:** with documents, downloads come from the *server*, which shares SubDL's anonymous limit of 300/day per IP (raising it needs a paid plan). The `file_id` cache is what keeps that comfortable — every archive is downloaded at most once per database, so the limit is spent on new files only. `/status` shows the counters («ارسال N · کش M») if you ever want to watch it.
 
 Series are grouped per season (`فصل 1`, `فصل 2`, …) and each button names the episodes it covers — «همه قسمت‌ها» for a full-season pack, «قسمت 1–8» for a part. A series query sends `full_season=1` so a season shows up as one zip instead of 30 single-episode files (and retries once without it when the title has no season pack at all); movies never send it.
 
-`SUBDL_API_KEY` is the only requirement: set it as a variable on Railway (or in `.env`) and redeploy. The owner dashboard (`/status`) shows whether the key is picked up — «🟢 فعال — جستجو 3 · عنوان 2» — and a missing key logs a warning at startup. Results are cached like every other source — a query for `search_ttl` (1 h), a title's file list for `page_ttl` (6 h) — to stay inside the free quota.
+`SUBDL_API_KEY` is the only requirement: set it as a variable on Railway (or in `.env`) and redeploy. Give the service a persistent volume for `DB_PATH` so the `file_id` cache survives redeploys — without it each archive is downloaded once per deploy instead of once, ever. The owner dashboard (`/status`) shows whether the key is picked up — «🟢 فعال — جستجو 3 · عنوان 2 · ارسال 5 · کش 4» — and a missing key logs a warning at startup. Results are cached like every other source — a query for `search_ttl` (1 h), a title's file list for `page_ttl` (6 h) — to stay inside the free quota.
 
 ## Docker
 
@@ -57,7 +65,7 @@ docker run --env-file .env \
   movie-bot
 ```
 
-The volume keeps the login session across container restarts; without it every redeploy needs a fresh `/login`. The container runs as a non-root user.
+The volume keeps the login session across container restarts; without it every redeploy needs a fresh `/login`. It also holds the SQLite database (`DB_PATH`, default `data/bot.db`) with users, content requests and the subtitle `file_id` cache. The container runs as a non-root user.
 
 ## Tests
 

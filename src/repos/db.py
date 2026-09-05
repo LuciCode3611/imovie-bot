@@ -87,6 +87,11 @@ class Database:
                     status     TEXT NOT NULL DEFAULT 'open',
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS subtitle_files (
+                    url        TEXT PRIMARY KEY,
+                    file_id    TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
                 CREATE INDEX IF NOT EXISTS idx_users_seen ON users(last_seen);
                 """
@@ -254,6 +259,41 @@ class Database:
             created_at=row["created_at"],
         )
 
+    # ----- subtitle archive cache -----------------------------------------
+
+    def subtitle_file_id(self, url: str) -> str | None:
+        """Telegram file_id of a subtitle archive the bot already uploaded.
+
+        Re-sending by file_id is free: no download from the subtitle source, no
+        server bandwidth and no share of its anonymous per-IP daily limit."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT file_id FROM subtitle_files WHERE url = ?", (url,)
+            ).fetchone()
+        return row["file_id"] if row else None
+
+    def store_subtitle_file_id(self, url: str, file_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO subtitle_files (url, file_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET file_id = excluded.file_id
+                """,
+                (url, file_id, self._now()),
+            )
+            self._conn.commit()
+
+    def forget_subtitle_file_id(self, url: str) -> None:
+        """Drop a cached file_id Telegram stopped accepting."""
+        with self._lock:
+            self._conn.execute("DELETE FROM subtitle_files WHERE url = ?", (url,))
+            self._conn.commit()
+
+    def count_subtitle_files(self) -> int:
+        with self._lock:
+            return int(self._conn.execute("SELECT COUNT(*) AS n FROM subtitle_files").fetchone()["n"])
+
     def stats(self) -> dict[str, Any]:
         return {
             "users": self.count_users(),
@@ -262,4 +302,5 @@ class Database:
             "searches": self.total_searches(),
             "requests_open": self.count_open_requests(),
             "requests_total": self.count_requests(),
+            "subtitle_files": self.count_subtitle_files(),
         }

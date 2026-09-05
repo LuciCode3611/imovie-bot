@@ -1,6 +1,6 @@
 """Subtitle system (SubDL): models/state, keyboards, rich builders and the
-handlers (search → pagination → card → public zip buttons), the /subtitle
-command and the owner dashboard counters."""
+handlers (search → pagination → card → document download, with the public link
+as fallback), the /subtitle command and the owner dashboard counters."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram.enums.button_style import ButtonStyle
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramServerError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, User
 
+from src.exceptions import ArchiveTooLargeError, SubdlError
 from src.handlers import admin, search, subtitle_card, subtitle_search
 from src.handlers.admin_views import overview_rich, overview_text
 from src.models import MediaKind, SubtitleDetails, SubtitleFile, SubtitlePack, SubtitleSummary
@@ -24,13 +25,19 @@ from src.services.formatting import (
     BUTTON_TEXT_LIMIT,
     SUBTITLE_DOWNLOAD_EMOJI_ID,
     subtitle_card_text,
+    subtitle_document_caption,
+    subtitle_document_name,
+    subtitle_link_keyboard,
     subtitle_results_keyboard,
     subtitle_root_keyboard,
 )
 from src.services.rich import rich_subtitle_message
-from src.services.subdl import SubdlClient
+from src.services.subdl import SubdlClient, SubtitleArchive
 
 DOWNLOAD = "https://dl.subdl.com/subtitle"
+NEW_FILE_ID = "FID-NEW"
+CACHED_FILE_ID = "FID-CACHED"
+ARCHIVE = SubtitleArchive(data=b"PK\x03\x04fake-zip", filename="11-22.zip")
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -113,8 +120,11 @@ def _state() -> FSMContext:
 
 @pytest.fixture
 def deps(tmp_path: Path) -> dict[str, Any]:
+    bot = AsyncMock()
+    # send_document must answer with a Message whose document carries a file_id
+    bot.send_document = AsyncMock(return_value=SimpleNamespace(document=SimpleNamespace(file_id=NEW_FILE_ID)))
     return {
-        "bot": AsyncMock(),
+        "bot": bot,
         "cache": TTLCache(),
         "card_state": CallbackState(ttl=60),
         "subdl": AsyncMock(enabled=True),
@@ -184,22 +194,29 @@ def test_a_very_long_title_is_capped_to_the_button_limit() -> None:
     assert len(button.text) == BUTTON_TEXT_LIMIT and button.text.endswith("…")
 
 
-def test_root_keyboard_turns_every_file_into_a_public_zip_button() -> None:
-    kb = subtitle_root_keyboard(_movie_details())
+def test_root_keyboard_turns_every_file_into_a_document_button() -> None:
+    kb = subtitle_root_keyboard(_movie_details(), "k1")
     buttons = [b for row in kb.inline_keyboard for b in row]
-    assert [b.url for b in buttons] == [f"{DOWNLOAD}/1-2.zip", f"{DOWNLOAD}/3-4.zip"]
+    # the card hands the bot an index, never a url: no source host, no key
+    assert [b.callback_data for b in buttons] == ["sdl:k1:0", "sdl:k1:1"]
     for button in buttons:
-        # every button downloads: no callback, no API key in the url
-        assert button.callback_data is None
-        assert "api_key" not in button.url and button.url.startswith("https://dl.subdl.com/")
+        assert button.url is None
         assert button.style == ButtonStyle.PRIMARY
         assert button.icon_custom_emoji_id == SUBTITLE_DOWNLOAD_EMOJI_ID
         assert button.text.startswith("دانلود")
-        assert len(button.text) <= BUTTON_TEXT_LIMIT
+        assert len(button.text) <= BUTTON_TEXT_LIMIT and len(button.callback_data.encode()) <= 64
+
+
+def test_link_fallback_keyboard_is_the_only_place_a_url_appears() -> None:
+    kb = subtitle_link_keyboard(_movie_details().files[0])
+    button = kb.inline_keyboard[0][0]
+    assert button.url == f"{DOWNLOAD}/1-2.zip" and button.callback_data is None
+    assert "لینک مستقیم" in button.text
 
 
 def test_root_keyboard_names_the_season_when_there_are_several() -> None:
-    rows = subtitle_root_keyboard(_series_details()).inline_keyboard
+    rows = subtitle_root_keyboard(_series_details(), "k2").inline_keyboard
+    assert [b.callback_data for row in rows for b in row] == ["sdl:k2:0", "sdl:k2:1", "sdl:k2:2"]
     assert [b.text for row in rows for b in row] == [
         "دانلود فصل 1 · همه قسمت‌ها · Breaking.Bad.S01",
         "دانلود فصل 2 · قسمت 1–8 · Breaking.Bad.S02.Part1",
@@ -211,13 +228,13 @@ def test_root_keyboard_truncates_a_long_release_name_instead_of_failing() -> Non
     long_name = "Some.Movie.2024.2160p.UHD.BluRay.x265.10bit.HDR.DTS-HD.MA.5.1-GROUP"
     details = _movie_details()
     details.packs[0].files[0].label = long_name  # what the parser hands over, pre-truncated
-    button = subtitle_root_keyboard(details).inline_keyboard[0][0]
+    button = subtitle_root_keyboard(details, "k1").inline_keyboard[0][0]
     assert len(button.text) == BUTTON_TEXT_LIMIT and button.text.endswith("…")
 
 
 def test_root_keyboard_is_none_without_files() -> None:
     """Telegram rejects a markup with no buttons — the card then sends text only."""
-    assert subtitle_root_keyboard(SubtitleDetails(summary=_summary())) is None
+    assert subtitle_root_keyboard(SubtitleDetails(summary=_summary()), "k1") is None
 
 
 # --- card texts --------------------------------------------------------------
@@ -362,7 +379,7 @@ async def test_open_card_sends_rich_message_and_caches_the_title(deps: dict[str,
     deps["bot"].send_rich_message.assert_awaited_once()
     kwargs = deps["bot"].send_rich_message.await_args.kwargs
     assert kwargs["chat_id"] == 42 and kwargs["rich_message"].is_rtl is True
-    assert kwargs["reply_markup"].inline_keyboard[0][0].url == f"{DOWNLOAD}/s01.zip"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"sdl:{key}:0"
     assert entry.rich is True and entry.details is details
     deps["subdl"].details.assert_awaited_once_with(details.summary)
     assert await deps["cache"].get(f"sub:details:{details.summary.key}") is details
@@ -386,7 +403,7 @@ async def test_open_card_falls_back_to_a_new_text_message(deps: dict[str, Any]) 
     kwargs = cb.message.answer.await_args.kwargs
     assert "Title 1" in text and "2 فایل زیرنویس" in text
     assert kwargs["parse_mode"] == "HTML"
-    assert kwargs["reply_markup"].inline_keyboard[0][0].url == f"{DOWNLOAD}/1-2.zip"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"sdl:{key}:0"
     cb.message.edit_text.assert_not_awaited()
     assert deps["card_state"].get_subtitle(key).rich is False
 
@@ -424,21 +441,29 @@ async def test_open_card_says_so_when_the_api_key_is_missing(deps: dict[str, Any
 # --- owner dashboard ---------------------------------------------------------
 
 
-async def test_dashboard_stats_include_the_subtitle_counters() -> None:
+async def test_dashboard_stats_include_the_subtitle_counters(tmp_path: Path) -> None:
     zarfilm = MagicMock()
     zarfilm._restore_session.return_value = False
     zarfilm.session_ttl_seconds.return_value = 0
     zarfilm.uptime_seconds.return_value = 5
     zarfilm.stats = {"searches": 1, "movies": 2}
     subdl = MagicMock(enabled=True)
-    subdl.stats = {"requests": 4, "searches": 3, "titles": 2}
+    subdl.stats = {"requests": 4, "searches": 3, "titles": 2, "downloads": 5}
     cfg = Config(_env_file=None, bot_token="t")
 
     stats = await admin._gather_stats(zarfilm, cfg, None, subdl)
     assert stats["sub_enabled"] is True and stats["sub_searches"] == 3 and stats["sub_titles"] == 2
-    assert "📝 زیرنویس: 🟢 فعال — جستجو 3 · عنوان 2" in overview_text(stats)
+    assert stats["sub_downloads"] == 5
+    expected = "🟢 فعال — جستجو 3 · عنوان 2 · ارسال 5 · کش 0"
+    assert f"📝 زیرنویس: {expected}" in overview_text(stats)
     cells = [c.text for block in overview_rich(stats).blocks if hasattr(block, "cells") for row in block.cells for c in row]
-    assert "📝 🟢 فعال — جستجو 3 · عنوان 2" in cells
+    assert f"📝 {expected}" in cells
+
+    # the cache count comes from the database: archives already on Telegram
+    db = Database(Path(tmp_path) / "dash.db")
+    db.store_subtitle_file_id("https://dl.subdl.com/subtitle/1.zip", "FID")
+    stats = await admin._gather_stats(zarfilm, cfg, db, subdl)
+    assert "کش 1" in overview_text(stats)
 
     # a host without SUBDL_API_KEY is reported as disabled, by name
     stats = await admin._gather_stats(zarfilm, cfg, None, MagicMock(enabled=False))
@@ -448,3 +473,133 @@ async def test_dashboard_stats_include_the_subtitle_counters() -> None:
     stats = await admin._gather_stats(zarfilm, cfg)
     assert stats["sub_searches"] == 0 and stats["sub_titles"] == 0 and stats["sub_enabled"] is False
     assert "غیرفعال" in overview_text(stats)
+
+
+# --- document naming ---------------------------------------------------------
+
+
+def test_document_name_is_friendly_and_keeps_the_extension() -> None:
+    details = _movie_details()
+    assert subtitle_document_name(details, details.files[0]) == "Title 1 (2001) — Interstellar.2014.1080p.BluRay.zip"
+    series = _series_details()
+    assert subtitle_document_name(series, series.files[0]) == "Title 2 (2002) — همه قسمت‌ها - Breaking.Bad.S01.zip"
+
+
+def test_document_name_survives_odd_labels_and_urls() -> None:
+    details = _movie_details()
+    colon = details.files[0].model_copy(update={"label": 'Bad: <>|Label', "url": f"{DOWNLOAD}/x"})
+    name = subtitle_document_name(details, colon)
+    assert not any(char in name for char in ':<>|') and name.endswith(".zip")
+    # an extensionless url falls back to the downloaded file's own name
+    nameless = details.files[0].model_copy(update={"url": f"{DOWNLOAD}/no-extension"})
+    assert subtitle_document_name(details, nameless, "archive.rar").endswith(".rar")
+    assert subtitle_document_name(details, nameless).endswith(".zip")
+    huge = details.files[0].model_copy(update={"label": "R" * 400})
+    assert len(subtitle_document_name(details, huge)) <= 100
+
+
+def test_document_caption_names_the_title_and_the_archive() -> None:
+    details = _series_details()
+    caption = subtitle_document_caption(details, details.files[0])
+    assert caption.splitlines()[0] == "📝 زیرنویس فارسی سریال | Title 2 (2002)"
+    assert "همه قسمت‌ها" in caption.splitlines()[1]
+
+
+# --- handlers: document download ---------------------------------------------
+
+
+def _download_deps(deps: dict[str, Any], details: SubtitleDetails | None = None) -> tuple[dict[str, Any], str, SubtitleFile]:
+    """A card entry whose details are already loaded, plus the callback data of
+    its first download button."""
+    details = details or _movie_details()
+    entry = SubtitleCardEntry(summary=details.summary, details=details)
+    key = deps["card_state"].create_subtitle(entry)
+    deps["subdl"].fetch_archive = AsyncMock(return_value=ARCHIVE)
+    return deps, f"sdl:{key}:0", details.files[0]
+
+
+async def test_download_uploads_the_archive_and_caches_its_file_id(deps: dict[str, Any]) -> None:
+    deps, data, file = _download_deps(deps)
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    deps["subdl"].fetch_archive.assert_awaited_once_with(file.url)
+    deps["bot"].send_document.assert_awaited_once()
+    args, kwargs = deps["bot"].send_document.await_args.args, deps["bot"].send_document.await_args.kwargs
+    assert args[0] == 42 and isinstance(args[1], BufferedInputFile)
+    assert args[1].filename == "Title 1 (2001) — Interstellar.2014.1080p.BluRay.zip"
+    assert kwargs["caption"].startswith("📝 زیرنویس فارسی")
+    # the upload is remembered: the next user never touches SubDL again
+    assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
+    cb.answer.assert_awaited_once_with()
+
+
+async def test_download_reuses_a_cached_file_id_without_fetching(deps: dict[str, Any]) -> None:
+    deps, data, file = _download_deps(deps)
+    deps["db"].store_subtitle_file_id(file.url, CACHED_FILE_ID)
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    deps["subdl"].fetch_archive.assert_not_awaited()
+    args = deps["bot"].send_document.await_args.args
+    assert args[1] == CACHED_FILE_ID
+    assert deps["db"].subtitle_file_id(file.url) == CACHED_FILE_ID
+
+
+async def test_a_stale_file_id_is_dropped_and_the_file_uploaded_again(deps: dict[str, Any]) -> None:
+    deps, data, file = _download_deps(deps)
+    deps["db"].store_subtitle_file_id(file.url, "FID-STALE")
+    deps["bot"].send_document = AsyncMock(
+        side_effect=[TelegramBadRequest(method=AsyncMock(), message="Bad Request: wrong file identifier"), AsyncMock(document=SimpleNamespace(file_id=NEW_FILE_ID))]
+    )
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    assert deps["bot"].send_document.await_count == 2
+    deps["subdl"].fetch_archive.assert_awaited_once_with(file.url)
+    assert deps["db"].subtitle_file_id(file.url) == NEW_FILE_ID
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_text"),
+    [
+        (SubdlError("subtitle download answered 429"), subtitle_card.DOWNLOAD_FAILED_TEXT),
+        (ArchiveTooLargeError("too big"), subtitle_card.FILE_TOO_LARGE_TEXT),
+        (TelegramServerError(method=AsyncMock(), message="Server Error"), subtitle_card.DOWNLOAD_FAILED_TEXT),
+    ],
+)
+async def test_a_failed_upload_falls_back_to_the_public_link(deps: dict[str, Any], failure: Exception, expected_text: str) -> None:
+    deps, data, file = _download_deps(deps)
+    deps["subdl"].fetch_archive = AsyncMock(side_effect=failure)
+    cb = _callback(data)
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+
+    cb.message.answer.assert_awaited_once()
+    text = cb.message.answer.await_args.args[0]
+    button = cb.message.answer.await_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert text == expected_text
+    assert button.url == file.url and button.callback_data is None
+    assert deps["db"].subtitle_file_id(file.url) is None  # nothing was uploaded
+
+
+async def test_download_reports_an_expired_card(deps: dict[str, Any]) -> None:
+    deps["subdl"].fetch_archive = AsyncMock()
+    cb = _callback("sdl:dead00:0")
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+    cb.answer.assert_awaited_once_with(subtitle_card.EXPIRED_TEXT, show_alert=True)
+    deps["subdl"].fetch_archive.assert_not_awaited()
+
+
+async def test_download_rejects_an_unknown_index_and_malformed_data(deps: dict[str, Any]) -> None:
+    deps, _data, _file = _download_deps(deps)
+    key = _data.split(":")[1]
+    for payload in (f"sdl:{key}:99", f"sdl:{key}:x", f"sdl:{key}", "sdl::"):
+        cb = _callback(payload)
+        await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+        deps["subdl"].fetch_archive.assert_not_awaited()
+        deps["bot"].send_document.assert_not_awaited()
+    # a card that was never opened has no details to index into
+    bare = deps["card_state"].create_subtitle(SubtitleCardEntry(summary=_summary()))
+    cb = _callback(f"sdl:{bare}:0")
+    await subtitle_card.download_subtitle(cb, **{k: deps[k] for k in ("bot", "subdl", "card_state", "db")})  # type: ignore[arg-type]
+    cb.answer.assert_awaited_once_with(subtitle_card.EXPIRED_TEXT, show_alert=True)

@@ -1,7 +1,7 @@
 """Dispatcher-level routing for the subtitle flow: the «📝 جستجوی زیرنویس»
 button / ``/subtitle`` arm a separate listening state, free text outside any
 state still gets the movie-search hint, both searches never collide — and the
-whole SubDL flow (search → card → public zip buttons) works end to end."""
+whole SubDL flow (search → card → document, cached by file_id) works end to end."""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,8 +11,8 @@ import httpx
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import EditMessageText, SendMessage, SendRichMessage
-from aiogram.types import Message, Update
+from aiogram.methods import EditMessageText, SendDocument, SendMessage, SendRichMessage
+from aiogram.types import BufferedInputFile, Message, Update
 
 from src.handlers import search, subtitle_search
 from src.models import MovieSummary, SubtitleSummary
@@ -126,11 +126,12 @@ def _build(tmp_path: Path):
 
     async def call(bot: Bot, method, timeout=None):
         sent.append(method)
+        base = {"message_id": 1000 + len(sent), "date": 0, "chat": {"id": OWNER_ID, "type": "private"}}
+        if isinstance(method, SendDocument):
+            base["document"] = {"file_id": DOCUMENT_FILE_ID, "file_unique_id": "u", "file_name": "subtitle.zip"}
+            return Message.model_validate(base, context={"bot": bot})
         if isinstance(method, (SendMessage, SendRichMessage)):
-            return Message.model_validate(
-                {"message_id": 1000 + len(sent), "date": 0, "chat": {"id": OWNER_ID, "type": "private"}, "text": getattr(method, "text", None)},
-                context={"bot": bot},
-            )
+            return Message.model_validate({**base, "text": getattr(method, "text", None)}, context={"bot": bot})
         return True
 
     session.side_effect = call
@@ -190,6 +191,9 @@ async def test_subtitle_command_and_movie_search_stay_independent(tmp_path: Path
     assert [b.callback_data for b in welcome.reply_markup.inline_keyboard[0]] == ["srch:go", "srch:sub_go"]
 
 
+ZIP_BYTES = b"PK\x03\x04persian subtitle payload"
+DOCUMENT_FILE_ID = "FID-DOC"  # what Telegram would hand back after an upload
+
 SEARCH_ANSWER = {
     "status": True,
     "results": [
@@ -212,12 +216,17 @@ TITLE_ANSWER = {
 
 @pytest.mark.usefixtures("_detach_routers")
 async def test_subtitle_flow_end_to_end_against_a_mocked_subdl_api(tmp_path: Path) -> None:
-    """Search → results → card → public zip buttons, through the real client and parsers."""
+    """Search → results → card → document (and the file_id cache), through the
+    real client, parsers and SQLite repository."""
     dp, bot, _zarfilm, _stub, sent = _build(tmp_path)
-    requests: list[httpx.Request] = []
+    api_calls: list[httpx.Request] = []
+    downloads: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
+        if request.url.host == "dl.subdl.com":
+            downloads.append(request)
+            return httpx.Response(200, content=ZIP_BYTES, headers={"Content-Type": "application/zip"})
+        api_calls.append(request)
         answer = SEARCH_ANSWER if "film_name" in request.url.params else TITLE_ANSWER
         return httpx.Response(200, json=answer)
 
@@ -235,17 +244,33 @@ async def test_subtitle_flow_end_to_end_against_a_mocked_subdl_api(tmp_path: Pat
         await dp.feed_update(bot, _callback_update(3, bot, first))
         rich = [m for m in sent if isinstance(m, SendRichMessage)][-1]
         buttons = [b for row in rich.reply_markup.inline_keyboard for b in row]
-        # only the two Persian files, both public zips, and no key anywhere in the card
-        assert [b.url for b in buttons] == ["https://dl.subdl.com/subtitle/11-22.zip", "https://dl.subdl.com/subtitle/55-66.zip"]
+        # only the two Persian files, as document buttons — the card shows no url at all
+        assert [b.callback_data for b in buttons] == ["sdl:" + first.split(":")[1] + ":0", "sdl:" + first.split(":")[1] + ":1"]
+        assert all(b.url is None for b in buttons)
         card = rich.reply_markup.model_dump_json() + rich.rich_message.model_dump_json()
-        assert "leaked-key" not in card and "api_key" not in card
+        assert "dl.subdl.com" not in card and "api_key" not in card and "leaked-key" not in card
         assert buttons[0].text == "دانلود Interstellar.2014.1080p.BluRay"
-        table = rich.rich_message.blocks[0]
-        assert table.cells[0][0].text == "Interstellar (2014)"
+
+        # tap the download button: the zip arrives as a Telegram document
+        await dp.feed_update(bot, _callback_update(4, bot, buttons[0].callback_data))
+        document = [m for m in sent if isinstance(m, SendDocument)][-1]
+        assert isinstance(document.document, BufferedInputFile)
+        assert document.document.data == ZIP_BYTES
+        assert document.document.filename == "Interstellar (2014) — Interstellar.2014.1080p.BluRay.zip"
+        assert document.caption.splitlines()[0] == "📝 زیرنویس فارسی فیلم | Interstellar (2014)"
+        assert len(downloads) == 1 and downloads[0].url.host == "dl.subdl.com"
+        assert "api_key" not in str(downloads[0].url)
+
+        # the upload is cached, so the next tap never touches SubDL again
+        db = dp.workflow_data["db"]
+        assert db.subtitle_file_id("https://dl.subdl.com/subtitle/11-22.zip") == DOCUMENT_FILE_ID
+        await dp.feed_update(bot, _callback_update(5, bot, buttons[0].callback_data))
+        assert len(downloads) == 1  # served from Telegram's own storage this time
+        assert [m for m in sent if isinstance(m, SendDocument)][-1].document == DOCUMENT_FILE_ID
     finally:
         await client.close()
 
-    assert [dict(r.url.params)["languages"] for r in requests] == ["FA", "FA"]
-    assert all(r.url.params["api_key"] == "k" for r in requests)
-    assert dict(requests[0].url.params)["film_name"] == "interstellar"
-    assert dict(requests[1].url.params)["sd_id"] == "1"
+    assert [dict(r.url.params)["languages"] for r in api_calls] == ["FA", "FA"]
+    assert all(r.url.params["api_key"] == "k" for r in api_calls)
+    assert dict(api_calls[0].url.params)["film_name"] == "interstellar"
+    assert dict(api_calls[1].url.params)["sd_id"] == "1"

@@ -1,19 +1,27 @@
 """HTTP client for the SubDL API — Persian subtitles only.
 
 ``SUBDL_API_KEY`` (set on the host, e.g. Railway) authenticates every request
-and stays server-side: the search runs here, while downloads are the public
-``dl.subdl.com`` zip links users tap in Telegram. A free key allows 2,000
-requests/day, so results are cached like every other source in this bot.
+and stays server-side; a free key allows 2,000 requests/day, so results are
+cached like every other source in this bot.
+
+Archives are fetched here too, so the bot can send them as Telegram documents
+instead of bare links. That moves the download onto the server's IP, which
+shares SubDL's anonymous 300/day limit — so every upload is cached by file_id
+(see repos/db.py) and a file is downloaded at most once per deployment.
 """
 
 import asyncio
+import re
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
-from src.exceptions import SubdlError
+from src.exceptions import ArchiveTooLargeError, SubdlError
 from src.models import MediaKind, SubtitleDetails, SubtitleSummary
 from src.models.config import Config
 from src.services.subdl_parsers import (
@@ -29,6 +37,25 @@ SUBS_PER_PAGE = 30
 TIMEOUT_SECONDS = 20.0
 RETRY_DELAY_SECONDS = 0.5
 
+# bots cannot upload more than 50 MB to Telegram; stop well before that
+MAX_ARCHIVE_BYTES = 40 * 1024 * 1024
+DOWNLOAD_TIMEOUT_SECONDS = 60.0
+CHUNK_BYTES = 64 * 1024
+# how many archives may sit in memory at once
+DOWNLOAD_SLOTS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleArchive:
+    """One downloaded subtitle archive, ready to be uploaded to Telegram."""
+
+    data: bytes
+    filename: str
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
+
 
 class SubdlClient:
     def __init__(self, config: Config, transport: httpx.AsyncBaseTransport | None = None) -> None:
@@ -41,8 +68,9 @@ class SubdlClient:
             transport=transport,
         )
         self._lock = asyncio.Lock()
+        self._download_slots = asyncio.Semaphore(DOWNLOAD_SLOTS)
         self.started_at = time.monotonic()
-        self.stats: dict[str, int] = {"requests": 0, "searches": 0, "titles": 0}
+        self.stats: dict[str, int] = {"requests": 0, "searches": 0, "titles": 0, "downloads": 0}
 
     @property
     def enabled(self) -> bool:
@@ -109,6 +137,70 @@ class SubdlClient:
             except httpx.TransportError as exc:
                 # class name only: an httpx message can quote the url (and the key in it)
                 raise SubdlError(f"SubDL unreachable ({exc.__class__.__name__})") from exc
+
+    async def fetch_archive(self, url: str) -> SubtitleArchive:
+        """Download one public zip so the bot can send it as a document.
+
+        Streams with a hard size cap (a mislabelled file must not eat the
+        container's memory) and rejects HTML answers — download hosts serve
+        "limit reached" interstitials with a 200 status.
+        """
+        async with self._download_slots:
+            self.stats["downloads"] += 1
+            chunks, filename = await self._read_archive(url)
+        data = b"".join(chunks)
+        if not data:
+            raise SubdlError("subtitle download returned an empty file")
+        return SubtitleArchive(data=data, filename=filename)
+
+    async def _read_archive(self, url: str) -> tuple[list[bytes], str]:
+        try:
+            # the url is absolute, so it overrides the API base_url
+            async with self._client.stream("GET", url, headers={"Accept": "*/*"}, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+                if response.status_code >= 400:
+                    raise SubdlError(f"subtitle download answered {response.status_code}")
+                if "html" in (response.headers.get("Content-Type") or "").casefold():
+                    raise SubdlError("subtitle download answered with an HTML page, not a file")
+                declared = _int_header(response.headers.get("Content-Length"))
+                if declared is not None and declared > MAX_ARCHIVE_BYTES:
+                    raise ArchiveTooLargeError(f"subtitle archive is {declared} bytes")
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes(CHUNK_BYTES):
+                    total += len(chunk)
+                    if total > MAX_ARCHIVE_BYTES:
+                        raise ArchiveTooLargeError(f"subtitle archive grew past {total} bytes")
+                    chunks.append(chunk)
+                return chunks, archive_filename(response.headers.get("Content-Disposition"), url)
+        except httpx.TransportError as exc:
+            raise SubdlError(f"subtitle download failed ({exc.__class__.__name__})") from exc
+
+
+def _int_header(value: str | None) -> int | None:
+    try:
+        return int((value or "").strip())
+    except ValueError:
+        return None
+
+
+# filename="x.zip" and filename*=UTF-8''x.zip both show up in the wild
+_DISPOSITION_FILENAME = re.compile(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", re.IGNORECASE)
+
+
+def archive_filename(disposition: str | None, url: str) -> str:
+    """The archive's own name: Content-Disposition first, then the url's last
+    path segment. Only a fallback — the bot renames documents per title — but it
+    always keeps an extension, since a nameless file confuses phone file managers.
+    """
+    name = ""
+    if disposition:
+        match = _DISPOSITION_FILENAME.search(disposition)
+        if match:
+            # PurePosixPath(...).name drops any directory the header smuggled in
+            name = PurePosixPath(unquote(match.group(1)).strip().strip("\"'")).name
+    if not name:
+        name = PurePosixPath(urlsplit(url).path).name or "subtitle"
+    return name if PurePosixPath(name).suffix else f"{name}.zip"
 
 
 # error codes SubDL puts in the body — observed live:

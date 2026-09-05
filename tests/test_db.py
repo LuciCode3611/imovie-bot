@@ -1,4 +1,4 @@
-"""SQLite repository: users, blocks, requests and overview stats."""
+"""SQLite repository: users, blocks, requests, the subtitle file cache and overview stats."""
 
 from pathlib import Path
 
@@ -77,3 +77,28 @@ def test_stats_bundle(tmp_path: Path) -> None:
     assert stats["searches"] == 1
     assert stats["requests_open"] == 1
     assert stats["requests_total"] == 1
+    assert stats["subtitle_files"] == 0
+
+
+def test_subtitle_file_cache_round_trip(tmp_path: Path) -> None:
+    """One upload per archive: a cached file_id keeps the download quota untouched."""
+    db = _db(tmp_path)
+    url = "https://dl.subdl.com/subtitle/3197651-3213944.zip"
+    assert db.subtitle_file_id(url) is None
+    db.store_subtitle_file_id(url, "FID-1")
+    assert db.subtitle_file_id(url) == "FID-1"
+    assert db.count_subtitle_files() == 1
+    # re-uploading the same url replaces the id instead of duplicating the row
+    db.store_subtitle_file_id(url, "FID-2")
+    assert db.subtitle_file_id(url) == "FID-2" and db.count_subtitle_files() == 1
+    db.store_subtitle_file_id("https://dl.subdl.com/subtitle/other.zip", "FID-3")
+    assert db.count_subtitle_files() == 2 and db.stats()["subtitle_files"] == 2
+
+
+def test_forgetting_a_stale_subtitle_file_id(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    url = "https://dl.subdl.com/subtitle/1.zip"
+    db.store_subtitle_file_id(url, "FID")
+    db.forget_subtitle_file_id(url)
+    assert db.subtitle_file_id(url) is None and db.count_subtitle_files() == 0
+    db.forget_subtitle_file_id(url)  # idempotent

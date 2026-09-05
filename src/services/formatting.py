@@ -1,5 +1,8 @@
+import re
 from html import escape
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiogram.enums.button_style import ButtonStyle
 from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,6 +15,7 @@ from src.models import (
     QualityPack,
     Season,
     SubtitleDetails,
+    SubtitleFile,
 )
 from src.repos.state import CardEntry, SubtitleCardEntry
 
@@ -431,27 +435,41 @@ def _subtitle_result_button(key: str, entry: SubtitleCardEntry, emoji_map: dict[
 
 def subtitle_root_keyboard(
     details: SubtitleDetails,
+    key: str,
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup | None:
     """Card root: one download button per subtitle file, right under the card.
 
-    There is no pack/season sub-view on purpose — tapping a button downloads
-    instead of replacing the card, so a season with several archives (part 1,
-    part 2, …) simply gets one button per archive. None when SubDL holds no
-    Persian file: Telegram rejects a markup without a single button.
+    There is no pack/season sub-view on purpose — tapping a button fetches the
+    archive instead of replacing the card, so a season with several archives
+    (part 1, part 2, …) simply gets one button per archive. The callback carries
+    the file's index in ``details.files``, which is this same pack-then-file
+    order. None when SubDL holds no Persian file: Telegram rejects a markup
+    without a single button.
     """
     grouped = len(details.packs) > 1
     rows: list[list[InlineKeyboardButton]] = []
+    index = 0
     for pack in details.packs:
         for file in pack.files:
             label = f"{pack.label} · {file.label}" if grouped else file.label
-            rows.append([_subtitle_file_button(label, file.url)])
+            rows.append([_subtitle_file_button(label, key, index)])
+            index += 1
     # no source-page button: the API and its key stay invisible to users
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
+def subtitle_link_keyboard(file: SubtitleFile) -> InlineKeyboardMarkup:
+    """Last resort when the document could not be sent: the public zip link."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🔗 لینک مستقیم دانلود", url=file.url, style=ButtonStyle.PRIMARY)]],
+    )
+
+
 # custom emoji shown on every subtitle download button
 SUBTITLE_DOWNLOAD_EMOJI_ID = "5406745015365943482"
+# callback prefix that asks for one file as a Telegram document: sdl:{key}:{index}
+SUBTITLE_DOWNLOAD_PREFIX = "sdl:"
 # Telegram refuses inline button labels longer than this
 BUTTON_TEXT_LIMIT = 64
 
@@ -464,13 +482,13 @@ def cap_button_text(text: str, limit: int = BUTTON_TEXT_LIMIT) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _subtitle_file_button(label: str, url: str) -> InlineKeyboardButton:
-    """Blue (primary) download button pointing at a public zip — no callback,
-    no credentials in the url."""
+def _subtitle_file_button(label: str, key: str, index: int) -> InlineKeyboardButton:
+    """Blue (primary) button that asks the bot for the file itself — the zip is
+    sent back as a document, so no download url (and no source host) is shown."""
     text = label if label.startswith("دانلود") else f"دانلود {label}"
     return InlineKeyboardButton(
         text=cap_button_text(text),
-        url=url,
+        callback_data=f"{SUBTITLE_DOWNLOAD_PREFIX}{key}:{index}",
         style=ButtonStyle.PRIMARY,
         icon_custom_emoji_id=SUBTITLE_DOWNLOAD_EMOJI_ID,
     )
@@ -491,3 +509,32 @@ def subtitle_card_text(details: SubtitleDetails) -> str:
         count = details.file_count
         lines.append(f"📦 {count} فایل زیرنویس در {len(details.packs)} بخش" if len(details.packs) > 1 else f"📦 {count} فایل زیرنویس")
     return "\n".join(lines)
+
+
+# Telegram accepts long file names, but a file manager should still show it whole
+DOCUMENT_NAME_LIMIT = 100
+_UNSAFE_FILENAME = re.compile(r"""[/\\:*?"<>|\x00-\x1f]+""")
+
+
+def subtitle_document_name(details: SubtitleDetails, file: SubtitleFile, fallback: str | None = None) -> str:
+    """The name Telegram shows on the document: title, year and what the archive
+    covers — instead of the source's «3197651-3213944.zip»."""
+    summary = details.summary
+    title = summary.title_en + (f" ({summary.year})" if summary.year else "")
+    label = file.label.replace(" · ", " - ") if file.label else "زیرنویس فارسی"
+    name = _UNSAFE_FILENAME.sub(" ", f"{title} — {label}")
+    name = " ".join(name.split()).strip(" .") or title
+    extension = PurePosixPath(urlsplit(file.url).path).suffix or PurePosixPath(fallback or "").suffix or ".zip"
+    if not name.casefold().endswith(extension.casefold()):
+        name += extension
+    if len(name) > DOCUMENT_NAME_LIMIT:
+        name = name[: DOCUMENT_NAME_LIMIT - len(extension)].rstrip(" .") + extension
+    return name
+
+
+def subtitle_document_caption(details: SubtitleDetails, file: SubtitleFile) -> str:
+    """Short HTML caption that travels with the sent document."""
+    summary = details.summary
+    year = f" ({summary.year})" if summary.year else ""
+    kind = KIND_WORDS.get(summary.kind, "")
+    return f"📝 زیرنویس فارسی {kind} | {escape(summary.title_en)}{year}\n📦 {escape(file.label)}"

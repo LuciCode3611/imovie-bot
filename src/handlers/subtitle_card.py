@@ -1,30 +1,47 @@
 """Subtitle card (SubDL title) — opened from the subtitle search results.
 
 Rendered as a Bot API 10.1 rich message (centered metadata table), with one
-inline download button per Persian subtitle file — a public ``dl.subdl.com``
-zip link, never an authenticated one. Clients that predate rich messages get
-the plain text card instead, like src/handlers/card.py does for movies.
+inline button per Persian subtitle file. Tapping a button sends the archive
+itself as a Telegram document — no download url, so the source host and the API
+key both stay invisible. Clients that predate rich messages get the plain text
+card, like src/handlers/card.py does for movies.
 
 Callback prefixes (no overlap with the movie card):
-    sm:{key}        open the card
+    sm:{key}            open the card
+    sdl:{key}:{index}   send one file as a document
 """
 
-from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery
+import logging
 
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.utils.chat_action import ChatActionSender
+
+from src.exceptions import ArchiveTooLargeError, SubdlError
 from src.handlers.card import EXPIRED_TEXT
 from src.handlers.subtitle_search import DISABLED_TEXT
+from src.models import SubtitleFile
 from src.models.config import Config
 from src.repos.cache import TTLCache
+from src.repos.db import Database
 from src.repos.state import CallbackState
-from src.services.formatting import subtitle_card_text, subtitle_root_keyboard
+from src.services.formatting import (
+    SUBTITLE_DOWNLOAD_PREFIX,
+    subtitle_card_text,
+    subtitle_document_caption,
+    subtitle_document_name,
+    subtitle_link_keyboard,
+    subtitle_root_keyboard,
+)
 from src.services.rich import rich_subtitle_message
 from src.services.subdl import SubdlClient
 
 router = Router(name="subtitle_card")
 
 NO_FILES_TEXT = "زیرنویس فارسی برای این عنوان پیدا نشد."
+DOWNLOAD_FAILED_TEXT = "😅 ارسال فایل ممکن نشد؛ از لینک مستقیم دانلودش کن."
+FILE_TOO_LARGE_TEXT = "⚠️ این فایل بزرگ‌تر از حدی است که ربات بتواند بفرستد؛ از لینک مستقیم دانلودش کن."
 
 
 @router.callback_query(F.data.startswith("sm:"))
@@ -50,7 +67,7 @@ async def open_subtitle_card(
         details = await subdl.details(entry.summary)
         await cache.set(title_key, details, cfg.page_ttl)
     entry.details = details
-    markup = subtitle_root_keyboard(details, emoji_map=cfg.emoji)
+    markup = subtitle_root_keyboard(details, key, emoji_map=cfg.emoji)
     if details.packs:
         try:
             await bot.send_rich_message(
@@ -71,3 +88,75 @@ async def open_subtitle_card(
     # overwriting the results list would throw away the other titles
     await callback.message.answer(text, reply_markup=markup, parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith(SUBTITLE_DOWNLOAD_PREFIX))
+async def download_subtitle(
+    callback: CallbackQuery,
+    bot: Bot,
+    subdl: SubdlClient,
+    card_state: CallbackState,
+    db: Database,
+) -> None:
+    """Send one subtitle archive as a document.
+
+    Preference order: a file_id this bot already uploaded (instant, and it costs
+    nothing against the source's per-IP download limit) → download the public zip
+    and upload it → the public link, so the user always leaves with the subtitle.
+    """
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3 or not parts[2].isdigit():
+        await callback.answer()
+        return
+    _, key, raw_index = parts
+    entry = card_state.get_subtitle(key)
+    details = entry.details if entry is not None else None
+    if details is None:
+        await callback.answer(EXPIRED_TEXT, show_alert=True)
+        return
+    files = details.files
+    index = int(raw_index)
+    if index >= len(files):
+        await callback.answer(EXPIRED_TEXT, show_alert=True)
+        return
+    file = files[index]
+    # answer first: the fetch can take seconds and the spinner should not wait
+    await callback.answer()
+    chat_id = callback.message.chat.id
+    caption = subtitle_document_caption(details, file)
+
+    cached = db.subtitle_file_id(file.url)
+    if cached is not None:
+        try:
+            # the caption is escaped HTML, so the parse mode is pinned explicitly
+            await bot.send_document(chat_id, cached, caption=caption, parse_mode="HTML")
+            return
+        except TelegramBadRequest:
+            db.forget_subtitle_file_id(file.url)  # stale id — upload afresh below
+
+    try:
+        # the indicator covers the download AND the upload: a 20 MB archive can
+        # take longer to hand to Telegram than to fetch
+        async with ChatActionSender.upload_document(bot=bot, chat_id=chat_id):
+            archive = await subdl.fetch_archive(file.url)
+            sent = await bot.send_document(
+                chat_id,
+                BufferedInputFile(archive.data, filename=subtitle_document_name(details, file, archive.filename)),
+                caption=caption,
+                parse_mode="HTML",
+            )
+    except ArchiveTooLargeError as exc:
+        logging.info("subtitle archive too large to send: %s", exc)
+        await _send_link(callback.message, file, FILE_TOO_LARGE_TEXT)
+        return
+    except (SubdlError, TelegramAPIError, OSError) as exc:
+        logging.warning("subtitle document could not be sent, falling back to the link: %s", exc)
+        await _send_link(callback.message, file, DOWNLOAD_FAILED_TEXT)
+        return
+    if sent.document is not None:
+        db.store_subtitle_file_id(file.url, sent.document.file_id)
+
+
+async def _send_link(message: Message, file: SubtitleFile, text: str) -> None:
+    """Fallback answer: the same public zip the button would have downloaded."""
+    await message.answer(text, reply_markup=subtitle_link_keyboard(file))

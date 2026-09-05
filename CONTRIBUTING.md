@@ -28,8 +28,8 @@ src/
 
 ## Domain rules
 
-- Direct links only: the bot sends zarfilm download URLs; it never re-uploads files to Telegram.
-- Subtitles: SubDL API, Persian (`FA`) only. `SUBDL_API_KEY` comes from the environment and stays server-side — download buttons are the public `dl.subdl.com` zip links with any query string stripped, so a key can never be published in a message. No key means the subtitle flow answers "unavailable" and the owner dashboard says why; the rest of the bot is unaffected.
+- Direct links only for movies and series: those files are gigabytes, so the bot sends zarfilm URLs and never re-uploads them. Subtitles are the deliberate exception — an archive is a few hundred KB, so the bot downloads it and sends it as a Telegram document, caching the returned `file_id` in SQLite (one download per archive, ever) and falling back to the public link when the file is oversized or either side fails.
+- Subtitles: SubDL API, Persian (`FA`) only. `SUBDL_API_KEY` comes from the environment and stays server-side. Cards show no download URL at all — buttons are callbacks, the file arrives as a document, and the public `dl.subdl.com` zip (query string stripped, so it can never carry the key) appears only as the failure fallback. Server-side downloads share SubDL's anonymous 300/day-per-IP limit, which the `file_id` cache keeps from ever being hit twice for the same archive. No key means the subtitle flow answers "unavailable" and the owner dashboard says why; the rest of the bot is unaffected.
 - Cookie-only sessions: the zarfilm login form is captcha-protected, so credentials are never used or stored and captchas are never solved. The only session supply is the `/login` admin command (owner pastes a browser cookie; the message is deleted immediately after reading it). The client restores the cookie from `session.json` and, on expiry, asks the owner to re-run `/login`.
 - Secrets (`.env`, session files) are never committed, never logged, never echoed into chats.
 - Scraping etiquette: in-memory TTL cache for searches and pages; space out requests; one search in flight per user.
