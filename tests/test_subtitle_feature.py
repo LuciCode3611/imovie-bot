@@ -18,12 +18,10 @@ from src.repos.cache import TTLCache
 from src.repos.state import CallbackState, CardEntry, SubtitleCardEntry, SubtitleSearchEntry
 from src.services.formatting import (
     subtitle_card_text,
-    subtitle_pack_caption,
-    subtitle_pack_keyboard,
     subtitle_results_keyboard,
     subtitle_root_keyboard,
 )
-from src.services.rich import rich_subtitle_message, rich_subtitle_pack_message
+from src.services.rich import rich_subtitle_message
 
 # --- fixtures ----------------------------------------------------------------
 
@@ -181,19 +179,24 @@ def test_root_keyboard_single_file_movie_is_a_direct_download_button() -> None:
     assert not any(b.url and "subkade.ir/persian" in b.url for row in kb.inline_keyboard for b in row)
 
 
-def test_root_keyboard_series_lists_packs_then_pack_keyboard_lists_files() -> None:
+def test_root_keyboard_lists_one_download_button_per_file() -> None:
+    """No pack/season sub-view: every file is a direct download button on the card."""
     details = _series_details()
     kb = subtitle_root_keyboard(details, "k2")
-    texts = [row[0].text for row in kb.inline_keyboard]
-    assert texts[0].endswith("فصل 1") and "2 فایل" in texts[1]
-    assert kb.inline_keyboard[0][0].callback_data == "sp:k2:0"
-    assert kb.inline_keyboard[1][0].callback_data == "sp:k2:1"
-    pack_kb = subtitle_pack_keyboard(details.packs[1], "k2")
-    assert [b.url for row in pack_kb.inline_keyboard[:-1] for b in row] == [
+    rows = kb.inline_keyboard
+    assert [b.url for row in rows for b in row] == [
+        "https://dl1.subkade.ir/s01.zip",
         "https://dl1.subkade.ir/s02a.zip",
         "https://dl1.subkade.ir/s02b.zip",
     ]
-    assert pack_kb.inline_keyboard[-1][0].callback_data == "sx:k2"
+    # every button downloads (no callback_data) and names its season
+    assert all(b.callback_data is None for row in rows for b in row)
+    assert "فصل 1" in rows[0][0].text and "فصل 2" in rows[1][0].text and "فصل 2" in rows[2][0].text
+    assert rows[0][0].text.startswith("دانلود")
+
+    movie_kb = subtitle_root_keyboard(_movie_details(), "k1")
+    assert len(movie_kb.inline_keyboard) == 1
+    assert movie_kb.inline_keyboard[0][0].text == "دانلود زیرنویس فارسی فیلم"
 
 
 def test_classic_texts_contain_metadata_and_links() -> None:
@@ -203,8 +206,7 @@ def test_classic_texts_contain_metadata_and_links() -> None:
     assert "مترجم" not in text  # translators are not part of the card anymore
     series = _series_details()
     assert "در حال پخش" in subtitle_card_text(series)
-    caption = subtitle_pack_caption(series, series.packs[1])
-    assert 'href="https://dl1.subkade.ir/s02a.zip"' in caption and "2 فایل" in caption
+    assert "3 فایل" in subtitle_card_text(series)
 
 
 # --- rich ---------------------------------------------------------------------
@@ -232,17 +234,6 @@ def test_rich_subtitle_message_without_poster_or_plot() -> None:
     details.plot = None
     types = [b["type"] for b in _blocks(rich_subtitle_message(details))]
     assert types == ["table"]
-
-
-def test_rich_pack_message_lists_pack_files() -> None:
-    details = _series_details()
-    rich = rich_subtitle_pack_message(details, details.packs[1])
-    blocks = _blocks(rich)
-    assert blocks[0]["type"] == "heading" and "فصل 2" in blocks[0]["text"]
-    assert len(blocks[1]["cells"]) == 3
-
-
-# --- handlers: search + pagination --------------------------------------------
 
 
 async def test_button_and_command_arm_listening_state() -> None:
@@ -324,7 +315,7 @@ async def test_open_card_sends_rich_message_and_caches_page(deps: dict[str, Any]
     deps["bot"].send_rich_message.assert_awaited_once()
     kwargs = deps["bot"].send_rich_message.await_args.kwargs
     assert kwargs["chat_id"] == 42 and kwargs["rich_message"].is_rtl is True
-    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == f"sp:{key}:0"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].url == "https://dl1.subkade.ir/s01.zip"
     assert entry.rich is True and entry.details is details
     assert await deps["cache"].get(f"sub:page:{details.summary.slug}") is details
 
@@ -351,53 +342,6 @@ async def test_open_card_falls_back_to_photo_then_text(deps: dict[str, Any]) -> 
     await subtitle_card.open_subtitle_card(cb, **{k: deps[k] for k in ("bot", "subkade", "cache", "card_state", "cfg")})  # type: ignore[arg-type]
     cb.message.edit_text.assert_awaited_once()
     assert cb.message.edit_text.await_args.kwargs["parse_mode"] == "HTML"
-
-
-async def test_pack_and_back_edit_the_same_message(deps: dict[str, Any]) -> None:
-    details = _series_details()
-    entry = SubtitleCardEntry(summary=details.summary, details=details, rich=True)
-    key = deps["card_state"].create_subtitle(entry)
-    cb = _callback(f"sp:{key}:1")
-    await subtitle_card.open_subtitle_pack(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-    deps["bot"].edit_message_text.assert_awaited_once()
-    kwargs = deps["bot"].edit_message_text.await_args.kwargs
-    assert kwargs["text"] is None and kwargs["rich_message"] is not None
-    assert kwargs["reply_markup"].inline_keyboard[-1][0].callback_data == f"sx:{key}"
-    assert entry.pack == 1
-
-    cb = _callback(f"sx:{key}")
-    await subtitle_card.back_to_subtitle_root(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-    assert deps["bot"].edit_message_text.await_count == 2
-    assert entry.pack is None
-    root_markup = deps["bot"].edit_message_text.await_args.kwargs["reply_markup"]
-    assert root_markup.inline_keyboard[0][0].callback_data == f"sp:{key}:0"
-
-    # classic (non-rich) card edits the caption/text instead
-    entry.rich = False
-    cb = _callback(f"sp:{key}:0")
-    cb.message.content_type = "photo"
-    await subtitle_card.open_subtitle_pack(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-    cb.message.edit_caption.assert_awaited_once()
-    assert 'href="https://dl1.subkade.ir/s01.zip"' in cb.message.edit_caption.await_args.kwargs["caption"]
-
-
-async def test_invalid_and_expired_pack_paths_alert(deps: dict[str, Any]) -> None:
-    details = _series_details()
-    key = deps["card_state"].create_subtitle(SubtitleCardEntry(summary=details.summary, details=details, rich=True))
-    for data in (f"sp:{key}:9", f"sp:{key}:x", "sp:only"):
-        cb = _callback(data)
-        await subtitle_card.open_subtitle_pack(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-        cb.answer.assert_awaited_once_with(subtitle_card.INVALID_PATH_TEXT, show_alert=True)
-    for data in ("sp:dead00:0", "sx:dead00", "sm:dead00"):
-        cb = _callback(data)
-        if data.startswith("sm:"):
-            await subtitle_card.open_subtitle_card(cb, **{k: deps[k] for k in ("bot", "subkade", "cache", "card_state", "cfg")})  # type: ignore[arg-type]
-        elif data.startswith("sp:"):
-            await subtitle_card.open_subtitle_pack(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-        else:
-            await subtitle_card.back_to_subtitle_root(cb, bot=deps["bot"], card_state=deps["card_state"], cfg=deps["cfg"])
-        cb.answer.assert_awaited_once_with(subtitle_card.EXPIRED_TEXT, show_alert=True)
-    deps["bot"].edit_message_text.assert_not_awaited()
 
 
 async def test_dashboard_stats_include_subkade_counters() -> None:

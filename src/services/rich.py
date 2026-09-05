@@ -23,7 +23,7 @@ from aiogram.types import (
     RichTextUrl,
 )
 
-from src.models import MovieDetails, QualityPack, Season, SubtitleDetails, SubtitlePack
+from src.models import MovieDetails, QualityPack, Season, SubtitleDetails
 
 # rich messages cap at 32,768 chars / 500 blocks / 20 table columns — one
 # episode table per pack fits comfortably.
@@ -158,22 +158,8 @@ def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 
-def rich_subtitle_pack_message(details: SubtitleDetails, pack: SubtitlePack) -> InputRichMessage:
-    """One pack (season) opened: heading + compact table of its files."""
-    heading = f"📂 {details.summary.title_en} · {pack.label} — {pack.file_count} فایل"
-    cells: list[list[RichBlockTableCell]] = [[_text_cell("زیرنویس", header=True), _text_cell("دانلود", header=True)]]
-    for file in pack.files:
-        cells.append([_text_cell(file.label), _cell(RichTextUrl(text="🔗 دریافت", url=file.url))])
-    blocks: list = [
-        InputRichBlockSectionHeading(text=heading, size=2),
-        InputRichBlockTable(is_bordered=False, is_striped=True, is_compact=True, cells=cells),
-    ]
-    return InputRichMessage(blocks=blocks, is_rtl=True)
-
-
 __all__ = [
     "rich_card_message",
     "rich_episode_message",
     "rich_subtitle_message",
-    "rich_subtitle_pack_message",
 ]

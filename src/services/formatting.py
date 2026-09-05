@@ -12,7 +12,6 @@ from src.models import (
     QualityPack,
     Season,
     SubtitleDetails,
-    SubtitlePack,
 )
 from src.repos.state import CardEntry, SubtitleCardEntry
 
@@ -437,22 +436,19 @@ def subtitle_root_keyboard(
     key: str,
     emoji_map: dict[str, str] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Card root: a movie with a single file gets the download button right
-    away; series (or multi-file posts) list their packs (seasons) first."""
+    """Card root: one download button per subtitle file, right under the card.
+
+    There is no pack/season sub-view on purpose — tapping a button downloads
+    instead of replacing the card. Seasons with several archives (e.g. part 1
+    and part 2) simply get one button per archive.
+    """
+    grouped = len(details.packs) > 1
     rows: list[list[InlineKeyboardButton]] = []
-    if len(details.packs) == 1 and details.packs[0].file_count == 1:
-        rows.append([_subtitle_file_button(details.packs[0].files[0].label, details.packs[0].files[0].url)])
-    else:
-        for idx, pack in enumerate(details.packs):
-            label = f"{pack.label} - {pack.file_count} فایل" if pack.file_count > 1 else pack.label
-            rows.append([_icon_button(label, "season", emoji_map, callback_data=f"sp:{key}:{idx}", style=ButtonStyle.PRIMARY)])
+    for pack in details.packs:
+        for file in pack.files:
+            label = f"{pack.label} · {file.label}" if grouped else file.label
+            rows.append([_subtitle_file_button(label, file.url)])
     # no source-page button: the scraped domain stays invisible to users
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def subtitle_pack_keyboard(pack: SubtitlePack, key: str) -> InlineKeyboardMarkup:
-    rows = [[_subtitle_file_button(file.label, file.url)] for file in pack.files]
-    rows.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"sx:{key}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -499,9 +495,3 @@ def subtitle_card_text(details: SubtitleDetails) -> str:
         count = details.file_count
         lines.append(f"📦 {count} فایل زیرنویس در {len(details.packs)} بخش" if len(details.packs) > 1 else f"📦 {count} فایل زیرنویس")
     return "\n".join(lines)
-
-
-def subtitle_pack_caption(details: SubtitleDetails, pack: SubtitlePack) -> str:
-    header = f"📂 {escape(details.summary.title_en)} · {escape(pack.label)} — {pack.file_count} فایل"
-    body = [f'<a href="{escape(file.url)}">{escape(file.label)}</a>' for file in pack.files]
-    return "\n".join([header, "", *body])

@@ -35,7 +35,6 @@ class SubtitleCardEntry:
 
     summary: SubtitleSummary
     details: SubtitleDetails | None = None
-    pack: int | None = None  # open pack (season) index, None = overview
     rich: bool = False  # True once rendered as a Bot API 10.1 rich message
 
 
