@@ -31,7 +31,7 @@ class SearchEntry:
 
 @dataclass
 class SubtitleCardEntry:
-    """A subkade.ir subtitle post opened from the subtitle search results."""
+    """A SubDL title opened from the subtitle search results."""
 
     summary: SubtitleSummary
     details: SubtitleDetails | None = None

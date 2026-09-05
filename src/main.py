@@ -14,14 +14,14 @@ from src.models.config import Config, resolve_owner
 from src.repos.cache import TTLCache
 from src.repos.db import Database
 from src.repos.state import CallbackState
-from src.services.subkade import SubkadeClient
+from src.services.subdl import SubdlClient
 from src.services.zarfilm import ZarfilmClient
 
 
 def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     dp = Dispatcher(storage=MemoryStorage())
     zarfilm = ZarfilmClient(config)
-    subkade = SubkadeClient(config)
+    subdl = SubdlClient(config)
     cache = TTLCache()
     card_state = CallbackState(ttl=config.state_ttl)
     db = Database(config.db_path)
@@ -31,6 +31,8 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
         logging.info("ALLOWED_USER_IDS is empty — the bot is OPEN TO EVERY user")
     if resolve_owner(config) is None:
         logging.warning("no owner configured — /login and session-expiry alerts are disabled")
+    if not subdl.enabled:
+        logging.warning("SUBDL_API_KEY is not set — the Persian subtitle search is disabled")
     dp.message.middleware(AllowlistMiddleware(allowed, db))
     dp.callback_query.middleware(AllowlistMiddleware(allowed, db))
     search_lock = SearchLockMiddleware()
@@ -40,7 +42,7 @@ def build_dispatcher(config: Config) -> tuple[Dispatcher, ZarfilmClient]:
     deps = {
         "cfg": config,
         "zarfilm": zarfilm,
-        "subkade": subkade,
+        "subdl": subdl,
         "cache": cache,
         "card_state": card_state,
         "db": db,
@@ -102,9 +104,9 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await zarfilm.close()
-        subkade: SubkadeClient | None = dp.workflow_data.get("subkade")
-        if subkade is not None:
-            await subkade.close()
+        subdl: SubdlClient | None = dp.workflow_data.get("subdl")
+        if subdl is not None:
+            await subdl.close()
         await bot.session.close()
 
 

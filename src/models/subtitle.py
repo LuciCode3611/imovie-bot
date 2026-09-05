@@ -4,11 +4,21 @@ from src.models.movie import MediaKind
 
 
 class SubtitleFile(BaseModel):
-    """One downloadable subtitle archive (free Persian zip on dl1.subkade.ir)."""
+    """One downloadable Persian subtitle archive.
 
-    label: str  # e.g. "زیرنویس فارسی همه قسمت‌ها" / "زیرنویس فارسی فیلم"
+    ``url`` is a public ``dl.subdl.com`` zip link: it is handed to users as an
+    inline button, so it never carries credentials (see subdl_parsers).
+    """
+
+    label: str  # episode span and/or release name, e.g. «همه قسمت‌ها · Dune.2024.1080p.WEB»
     url: str
     language: str = "فارسی"
+    season: int | None = None
+    episode: int | None = None
+    episode_from: int | None = None
+    episode_end: int | None = None
+    full_season: bool = False
+    author: str | None = None
 
 
 class SubtitlePack(BaseModel):
@@ -24,25 +34,25 @@ class SubtitlePack(BaseModel):
 
 
 class SubtitleSummary(BaseModel):
-    slug: str
+    """One title matched by a SubDL search (an entry of the ``results`` array)."""
+
     title_en: str
-    year: int | None = None
-    poster_url: str | None = None
     kind: MediaKind = MediaKind.MOVIE
-    page_url: str | None = None  # canonical post URL (the source site, for the «🌐» button)
+    year: int | None = None
+    sd_id: str | None = None
+    imdb_id: str | None = None
+    tmdb_id: int | None = None
+
+    @property
+    def key(self) -> str:
+        """Stable id for caching this title's subtitle list (ids beat the name)."""
+        return str(self.sd_id or self.imdb_id or self.tmdb_id or self.title_en).casefold()
 
 
 class SubtitleDetails(BaseModel):
+    """The Persian subtitle files SubDL holds for one title."""
+
     summary: SubtitleSummary
-    title_fa: str | None = None
-    imdb: str | None = None
-    plot: str | None = None
-    genres: list[str] = Field(default_factory=list)
-    countries: list[str] = Field(default_factory=list)
-    cast: list[str] = Field(default_factory=list)
-    translators: str | None = None
-    sync_note: str | None = None  # e.g. "هماهنگ با نسخه BluRay"
-    airing: bool = False  # the «در حال پخش» ribbon on series
     packs: list[SubtitlePack] = Field(default_factory=list)
 
     @property
@@ -52,3 +62,13 @@ class SubtitleDetails(BaseModel):
     @property
     def file_count(self) -> int:
         return sum(pack.file_count for pack in self.packs)
+
+    @property
+    def season_labels(self) -> list[str]:
+        """Season headings for a series card (empty for a movie)."""
+        return [pack.label for pack in self.packs] if self.is_series else []
+
+    @property
+    def seasons(self) -> list[int]:
+        """Distinct season numbers the files cover, ascending."""
+        return sorted({file.season for pack in self.packs for file in pack.files if file.season is not None})

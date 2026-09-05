@@ -54,7 +54,7 @@ def test_build_dispatcher_injects_deps_and_routers() -> None:
     dp, zarfilm = build_dispatcher(_config())
     assert isinstance(dp, Dispatcher)
     assert len(dp.sub_routers) == 7
-    assert {"cfg", "zarfilm", "subkade", "cache", "card_state", "db"} <= set(dp.workflow_data)
+    assert {"cfg", "zarfilm", "subdl", "cache", "card_state", "db"} <= set(dp.workflow_data)
     assert dp.workflow_data["cfg"] is not None
     assert dp.workflow_data["zarfilm"] is zarfilm
     assert isinstance(dp.workflow_data["cache"], TTLCache)
@@ -71,6 +71,21 @@ async def test_on_error_warns_and_answers_message(caplog: pytest.LogCaptureFixtu
     assert handled is True
     message.answer.assert_awaited_once_with(common.UNAVAILABLE_TEXT)
     assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+async def test_on_error_logs_a_subtitle_source_failure_as_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Quota/key/5xx on SubDL is an expected condition, not an unhandled crash."""
+    from src.exceptions import SubdlError
+
+    message = AsyncMock(spec=Message)
+    message.answer = AsyncMock()
+    event = SimpleNamespace(update=SimpleNamespace(message=message, callback_query=None))
+    with caplog.at_level(logging.WARNING):
+        handled = await common.on_error(event, SubdlError("SubDL quota or rate limit reached"))  # type: ignore[arg-type]
+    assert handled is True
+    message.answer.assert_awaited_once_with(common.UNAVAILABLE_TEXT)
+    assert any("source failure" in record.message for record in caplog.records)
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 async def test_expired_cancel_key_alerts_with_real_state() -> None:
@@ -149,3 +164,30 @@ async def test_build_dispatcher_warns_on_empty_allowlist_and_missing_owner(
         await zarfilm.close()
     assert any("OPEN TO EVERY user" in record.message for record in caplog.records)
     assert any("no owner configured" in record.message for record in caplog.records)
+
+@pytest.mark.usefixtures("_detach_routers")
+async def test_build_dispatcher_wires_an_enabled_subtitle_client(caplog: pytest.LogCaptureFixture) -> None:
+    """The owner deploys with SUBDL_API_KEY on the host (Railway) — no warning then."""
+    from src.main import build_dispatcher
+
+    cfg = Config(_env_file=None, bot_token="1:abc", allowed_user_ids=[42], subdl_api_key="k")
+    with caplog.at_level(logging.WARNING):
+        dp, zarfilm = build_dispatcher(cfg)
+        subdl = dp.workflow_data["subdl"]
+        await zarfilm.close()
+        await subdl.close()
+    assert subdl.enabled is True
+    assert not any("SUBDL_API_KEY" in record.message for record in caplog.records)
+
+
+@pytest.mark.usefixtures("_detach_routers")
+async def test_build_dispatcher_warns_when_the_subtitle_key_is_missing(caplog: pytest.LogCaptureFixture) -> None:
+    from src.main import build_dispatcher
+
+    with caplog.at_level(logging.WARNING):
+        dp, zarfilm = build_dispatcher(_config())
+        subdl = dp.workflow_data["subdl"]
+        await zarfilm.close()
+        await subdl.close()
+    assert subdl.enabled is False
+    assert any("SUBDL_API_KEY" in record.message for record in caplog.records)

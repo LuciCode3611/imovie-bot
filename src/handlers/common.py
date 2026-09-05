@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from src.exceptions import AuthError, NotFoundError, ZarfilmError
+from src.exceptions import AuthError, NotFoundError, SubdlError, ZarfilmError
 from src.models.config import Config, resolve_owner
 from src.services.formatting import welcome_keyboard
 
@@ -157,7 +157,8 @@ async def on_error(
     cfg: Config | None = None,
 ) -> bool:
     failure = exception or getattr(event, "exception", None)
-    if isinstance(failure, ZarfilmError):
+    if isinstance(failure, (ZarfilmError, SubdlError)):
+        # expected source conditions (quota, bad key, 5xx): a warning, not a traceback
         logging.warning("source failure: %s", failure)
     else:
         logging.exception("unhandled bot error: %s", failure)

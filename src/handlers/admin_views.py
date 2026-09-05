@@ -115,6 +115,14 @@ def requests_keyboard(requests: list[RequestRow], page: int, total: int) -> Inli
 # ---------- rich / plain rendering ------------------------------------------
 
 
+def subtitle_status(stats: dict) -> str:
+    """One line for the subtitle source: is the SubDL key there, and how much of
+    it has been used since startup (owner-only view, so the variable name is fine)."""
+    if not stats.get("sub_enabled"):
+        return "🔴 غیرفعال — SUBDL_API_KEY تنظیم نشده"
+    return f"🟢 فعال — جستجو {stats.get('sub_searches', 0)} · عنوان {stats.get('sub_titles', 0)}"
+
+
 def overview_rich(stats: dict) -> InputRichMessage:
     online = "🟢 آنلاین" if stats.get("online") else "🔴 آفلاین"
     if not stats.get("session_present"):
@@ -141,7 +149,7 @@ def overview_rich(stats: dict) -> InputRichMessage:
         [s("جستجوها (ربات)", header=True), s(f"🔍 {stats.get('searches', 0)}")],
         [s("جستجوها (کل کاربران)", header=True), s(f"📊 {stats.get('searches_total', 0)}")],
         [s("صفحه‌های باز شده", header=True), s(f"🎬 {stats.get('movies', 0)}")],
-        [s("زیرنویس (جستجو / صفحه)", header=True), s(f"📝 {stats.get('sub_searches', 0)} / {stats.get('sub_pages', 0)}")],
+        [s("زیرنویس", header=True), s(f"📝 {subtitle_status(stats)}")],
         [s("درخواست‌های باز", header=True), s(f"📥 {stats.get('requests_open', 0)}")],
         [s("کل درخواست‌ها", header=True), s(f"🗂 {stats.get('requests_total', 0)}")],
     ]
@@ -160,7 +168,7 @@ def overview_text(stats: dict) -> str:
         f"🚫 مسدود: {stats.get('blocked', 0)}",
         f"🔍 جستجوها: ربات {stats.get('searches', 0)} · کل {stats.get('searches_total', 0)}",
         f"🎬 صفحه‌های باز شده: {stats.get('movies', 0)}",
-        f"📝 زیرنویس: جستجو {stats.get('sub_searches', 0)} · صفحه {stats.get('sub_pages', 0)}",
+        f"📝 زیرنویس: {subtitle_status(stats)}",
         f"📥 درخواست‌های باز: {stats.get('requests_open', 0)} از {stats.get('requests_total', 0)}",
     ]
     return "\n".join(lines)

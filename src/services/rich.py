@@ -24,6 +24,7 @@ from aiogram.types import (
 )
 
 from src.models import MovieDetails, QualityPack, Season, SubtitleDetails
+from src.services.formatting import KIND_WORDS, kind_badge
 
 # rich messages cap at 32,768 chars / 500 blocks / 20 table columns — one
 # episode table per pack fits comfortably.
@@ -37,7 +38,6 @@ LABEL_EMOJI: dict[str, tuple[str, str]] = {
     "runtime": ("5458603043203327669", "⏱"),
     "genre": ("5397782960512444700", "🎭"),
     "cast": ("5217822164362739968", "🎬"),
-    "sync": ("5458603043203327669", "🎯"),
 }
 
 
@@ -123,39 +123,28 @@ def rich_episode_message(
     return InputRichMessage(blocks=blocks, is_rtl=True)
 
 
-# --- subtitles (subkade.ir) -------------------------------------------------
+# --- subtitles (SubDL API) ---------------------------------------------------
 
 
 def _subtitle_info_table(details: SubtitleDetails) -> InputRichBlockTable:
+    """Title / kind / seasons / file count — SubDL supplies no poster, rating or
+    synopsis, and the downloads live in the buttons under the card."""
     summary = details.summary
-    fa_title = details.title_fa or summary.title_en
+    title = summary.title_en + (f" ({summary.year})" if summary.year else "")
+    kind = f"{kind_badge(summary.kind)} {KIND_WORDS.get(summary.kind, '')}".strip()
     rows: list[list[RichBlockTableCell]] = [
-        [_text_cell(summary.title_en + (f" ({summary.year})" if summary.year else ""), header=True), _text_cell(fa_title, header=True)]
+        [_text_cell(title, header=True), _text_cell("زیرنویس فارسی", header=True)],
+        [_cell("نوع"), _text_cell(kind)],
     ]
-
-    def add(role: str, label: str, value: str | None) -> None:
-        if value:
-            rows.append([_label_cell(role, label), _text_cell(value)])
-
-    add("imdb", "امتیاز", details.imdb)
-    add("status", "وضعیت", "🟢 در حال پخش" if details.airing else None)
-    add("country", "محصول", "، ".join(details.countries) if details.countries else None)
-    add("genre", "ژانر", "، ".join(details.genres[:5]) if details.genres else None)
-    add("cast", "ستارگان", "، ".join(details.cast[:5]) if details.cast else None)
-    add("sync", "هماهنگی", details.sync_note)
+    if details.seasons:
+        rows.append([_cell("فصل‌ها"), _text_cell("، ".join(str(season) for season in details.seasons))])
+    rows.append([_cell("فایل‌ها"), _text_cell(f"{details.file_count} فایل فارسی")])
     return InputRichBlockTable(is_bordered=False, is_striped=False, is_compact=True, cells=rows)
 
 
 def rich_subtitle_message(details: SubtitleDetails) -> InputRichMessage:
-    """Subtitle box: poster + metadata table + story (downloads live in the buttons)."""
-    blocks: list = []
-    if details.summary.poster_url:
-        blocks.append(InputRichBlockPhoto(photo=InputMediaPhoto(media=details.summary.poster_url)))
-    blocks.append(_subtitle_info_table(details))
-    if details.plot:
-        blocks.append(InputRichBlockDivider())
-        blocks.append(InputRichBlockPullQuotation(text=details.plot))
-    return InputRichMessage(blocks=blocks, is_rtl=True)
+    """Subtitle box: the metadata table only, RTL like the movie card."""
+    return InputRichMessage(blocks=[_subtitle_info_table(details)], is_rtl=True)
 
 
 __all__ = [

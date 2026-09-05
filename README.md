@@ -20,11 +20,12 @@ A private Telegram bot for finding movies and series: tap **جستجو**, type a
    | `EMOJI` | Optional JSON map of role → custom emoji ID for button labels (roles: `original`, `dub`, `season`, `quality`, `result`). Roles without an ID — or an unset `EMOJI` — fall back to built-in unicode icons, so the bot never breaks either way |
    | `SESSION_PATH` | Optional path for the stored login session (default `session.json` in the working directory); in Docker, point it at a mounted volume |
    | `PROXY_URL` | Optional; if Telegram is blocked on the host, set this to your local proxy endpoint, e.g. `socks5://127.0.0.1:10808` or `http://127.0.0.1:10809` |
-   | `SUBKADE_BASE_URL` | Optional; subtitle source origin (default `https://subkade.ir`) |
+   | `SUBDL_API_KEY` | SubDL API key for the Persian subtitle search — free key from the [SubDL panel](https://subdl.com/panel/api) (2,000 requests/day). Without it the bot still runs and the subtitle section reports itself unavailable |
+   | `SUBDL_BASE_URL` / `SUBDL_DOWNLOAD_URL` | Optional; SubDL API origin (default `https://api.subdl.com`) and public download origin (default `https://dl.subdl.com`) |
 
    > **Note:** When `ALLOWED_USER_IDS` is set, `OWNER_ID` alone does NOT grant access — the allowlist middleware only reads `ALLOWED_USER_IDS`, so the owner's Telegram ID must ALSO appear in it or every request (including `/login`) is rejected. For example: `ALLOWED_USER_IDS=5441961764` with `OWNER_ID=5441961764`. **If `ALLOWED_USER_IDS` is empty the bot is OPEN TO EVERY user** (and logs an info line at startup); in that open mode set `OWNER_ID` explicitly if you want `/login` and session alerts.
 
-   Cards use Bot API 10.1 **rich messages** (poster + centered borderless metadata table + centered story pull-quote). On Telegram clients older than that the bot automatically falls back to the classic photo card.
+   Cards use Bot API 10.1 **rich messages** (poster + centered borderless metadata table + centered story pull-quote). On Telegram clients older than that the bot automatically falls back to the classic photo card. Subtitle cards are table-only — SubDL returns files, not posters or synopses.
 
 3. Run:
 
@@ -36,9 +37,15 @@ A private Telegram bot for finding movies and series: tap **جستجو**, type a
 
 Free text never hits the site: the user taps [ 🔍 جستجو ], the bot enters a listening state («نام فیلم یا سریال رو بنویس…»), and the next message becomes the search query. Text sent while not listening just gets a hint with the button attached. The listening mode resets automatically after results or no-results, and `/start` clears it.
 
-## Subtitle search (subkade.ir)
+## Subtitle search (SubDL)
 
-Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, searches [subkade.ir](https://subkade.ir/) and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — poster, metadata table (IMDb, genres, cast, sync note) and synopsis; every subtitle file gets its own blue «دانلود …» button under the card — there is no season sub-view, so the card never changes. The card never links back to the source page. Only the free Persian archives on `dl1.subkade.ir` are scraped — the VIP-only English/Arabic lists are ignored. No login is required; the source domain can be overridden with `SUBKADE_BASE_URL`.
+Next to [ 🔍 جستجو ] there is [ 📝 جستجوی زیرنویس ] (also `/subtitle`). It arms its own listening state, calls the [SubDL API](https://subdl.com/api-doc) for **Persian (`FA`) subtitles only**, and pages the results exactly like the movie search (5 per page, `◀ 1/3 ▶`). Opening a result renders a rich card — a centered metadata table with the title, year, movie/series kind, seasons and file count — and **every subtitle file gets its own blue «دانلود …» button** under the card. There is no season sub-view, so the card never changes: a season with several archives simply gets one button per archive.
+
+Downloads are **public zip links**: the API answers with a path (`/subtitle/<id>.zip`) that the bot joins onto `dl.subdl.com`, dropping any query string. The API key authenticates the bot's own searches and never travels in a button, so users can copy and share the links freely (SubDL limits anonymous downloads to 300/day per IP, which lands on the user's connection, not the server's).
+
+Series are grouped per season (`فصل 1`, `فصل 2`, …) and each button names the episodes it covers — «همه قسمت‌ها» for a full-season pack, «قسمت 1–8» for a part. A series query sends `full_season=1` so a season shows up as one zip instead of 30 single-episode files (and retries once without it when the title has no season pack at all); movies never send it.
+
+`SUBDL_API_KEY` is the only requirement: set it as a variable on Railway (or in `.env`) and redeploy. The owner dashboard (`/status`) shows whether the key is picked up — «🟢 فعال — جستجو 3 · عنوان 2» — and a missing key logs a warning at startup. Results are cached like every other source — a query for `search_ttl` (1 h), a title's file list for `page_ttl` (6 h) — to stay inside the free quota.
 
 ## Docker
 

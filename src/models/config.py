@@ -26,7 +26,11 @@ class Config(BaseSettings):
     emoji: Annotated[dict[str, str] | None, NoDecode] = None
     proxy_url: str | None = None
     base_url: str = "https://zarfilm.com"
-    subkade_base_url: str = "https://subkade.ir"
+    # SubDL (subtitles): the key comes from the environment (Railway/Docker)
+    # and never leaves the server — download buttons are public zip links.
+    subdl_api_key: str | None = None
+    subdl_base_url: str = "https://api.subdl.com"
+    subdl_download_url: str = "https://dl.subdl.com"
 
     @field_validator("allowed_user_ids", mode="before")
     @classmethod

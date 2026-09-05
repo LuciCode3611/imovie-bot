@@ -394,9 +394,7 @@ def apply_icon(text: str, role: str, emoji_map: dict[str, str], **button_kwargs:
     return InlineKeyboardButton(text=f"{FALLBACK_ICONS.get(role, '')} {text}".strip(), **button_kwargs)
 
 
-# --- subtitles (subkade.ir) -------------------------------------------------
-
-SUBTITLE_PLOT_LIMIT = 260
+# --- subtitles (SubDL API) ---------------------------------------------------
 
 
 def subtitle_results_keyboard(
@@ -424,7 +422,7 @@ def subtitle_results_keyboard(
 def _subtitle_result_button(key: str, entry: SubtitleCardEntry, emoji_map: dict[str, str] | None) -> InlineKeyboardButton:
     s = entry.summary
     label = s.title_en + (f" ({s.year})" if s.year else "")
-    text = f"{kind_badge(s.kind)} {label}"
+    text = cap_button_text(f"{kind_badge(s.kind)} {label}")
     icon = (emoji_map or {}).get("result")
     if icon:
         return InlineKeyboardButton(text=text, icon_custom_emoji_id=icon, callback_data=f"sm:{key}", style=ButtonStyle.PRIMARY)
@@ -433,14 +431,14 @@ def _subtitle_result_button(key: str, entry: SubtitleCardEntry, emoji_map: dict[
 
 def subtitle_root_keyboard(
     details: SubtitleDetails,
-    key: str,
     emoji_map: dict[str, str] | None = None,
-) -> InlineKeyboardMarkup:
+) -> InlineKeyboardMarkup | None:
     """Card root: one download button per subtitle file, right under the card.
 
     There is no pack/season sub-view on purpose — tapping a button downloads
-    instead of replacing the card. Seasons with several archives (e.g. part 1
-    and part 2) simply get one button per archive.
+    instead of replacing the card, so a season with several archives (part 1,
+    part 2, …) simply gets one button per archive. None when SubDL holds no
+    Persian file: Telegram rejects a markup without a single button.
     """
     grouped = len(details.packs) > 1
     rows: list[list[InlineKeyboardButton]] = []
@@ -448,19 +446,30 @@ def subtitle_root_keyboard(
         for file in pack.files:
             label = f"{pack.label} · {file.label}" if grouped else file.label
             rows.append([_subtitle_file_button(label, file.url)])
-    # no source-page button: the scraped domain stays invisible to users
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    # no source-page button: the API and its key stay invisible to users
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 # custom emoji shown on every subtitle download button
 SUBTITLE_DOWNLOAD_EMOJI_ID = "5406745015365943482"
+# Telegram refuses inline button labels longer than this
+BUTTON_TEXT_LIMIT = 64
+
+
+def cap_button_text(text: str, limit: int = BUTTON_TEXT_LIMIT) -> str:
+    """Keep a label inside Telegram's button limit — a long scene release name
+    would otherwise make the whole card fail with BUTTON_TEXT_INVALID."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def _subtitle_file_button(label: str, url: str) -> InlineKeyboardButton:
-    """Blue (primary) download button, icon included when the bot may use one."""
+    """Blue (primary) download button pointing at a public zip — no callback,
+    no credentials in the url."""
     text = label if label.startswith("دانلود") else f"دانلود {label}"
     return InlineKeyboardButton(
-        text=text,
+        text=cap_button_text(text),
         url=url,
         style=ButtonStyle.PRIMARY,
         icon_custom_emoji_id=SUBTITLE_DOWNLOAD_EMOJI_ID,
@@ -468,29 +477,16 @@ def _subtitle_file_button(label: str, url: str) -> InlineKeyboardButton:
 
 
 def subtitle_card_text(details: SubtitleDetails) -> str:
-    """Classic (non-rich) subtitle card caption, HTML parse mode."""
+    """Classic (non-rich) subtitle card caption, HTML parse mode.
+
+    SubDL answers with files, not with a synopsis: title, year and kind are all
+    the metadata there is, so the card stays short and the buttons carry the rest.
+    """
     summary = details.summary
-    title = escape(summary.title_en)
-    if details.title_fa:
-        title += f" — {escape(details.title_fa)}"
     year = f" ({summary.year})" if summary.year else ""
-    lines = [f"📝 زیرنویس فارسی {KIND_WORDS.get(summary.kind, '')} | {title}{year}"]
-    meta: list[str] = []
-    if details.imdb:
-        meta.append(f"⭐ {escape(details.imdb)}")
-    if details.airing:
-        meta.append("🟢 در حال پخش")
-    if details.genres:
-        meta.append("🎭 " + escape("، ".join(details.genres[:3])))
-    if meta:
-        lines.append(" · ".join(meta))
-    if details.sync_note:
-        lines.append(f"🎯 {escape(details.sync_note)}")
-    if details.plot:
-        plot = details.plot
-        if len(plot) > SUBTITLE_PLOT_LIMIT:
-            plot = plot[:SUBTITLE_PLOT_LIMIT].rsplit(" ", 1)[0] + "…"
-        lines.append(f"📄 {escape(plot)}")
+    lines = [f"📝 زیرنویس فارسی {KIND_WORDS.get(summary.kind, '')} | {escape(summary.title_en)}{year}"]
+    if details.is_series and len(details.packs) > 1:
+        lines.append("📂 " + escape("، ".join(details.season_labels)))
     if details.packs:
         count = details.file_count
         lines.append(f"📦 {count} فایل زیرنویس در {len(details.packs)} بخش" if len(details.packs) > 1 else f"📦 {count} فایل زیرنویس")

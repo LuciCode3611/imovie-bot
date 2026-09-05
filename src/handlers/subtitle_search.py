@@ -1,8 +1,9 @@
-"""Subtitle search (subkade.ir): «📝 جستجوی زیرنویس» button / ``/subtitle``.
+"""Subtitle search (SubDL API): «📝 جستجوی زیرنویس» button / ``/subtitle``.
 
 Mirrors src/handlers/search.py one-to-one: a listening state armed by the
 button or command, the animated «صبر کن پیداش کنم» status, cached results
-and the same ◀ 1/3 ▶ pagination (5 per page).
+and the same ◀ 1/3 ▶ pagination (5 per page). Persian (FA) titles only — the
+language is part of every API request.
 """
 
 from html import escape
@@ -23,12 +24,15 @@ from src.repos.cache import TTLCache
 from src.repos.db import Database
 from src.repos.state import CallbackState, SubtitleCardEntry, SubtitleSearchEntry
 from src.services.formatting import subtitle_results_keyboard
-from src.services.subkade import SubkadeClient
+from src.services.subdl import SubdlClient
 
 router = Router(name="subtitle_search")
 
 LISTENING_TEXT = "نام فیلم یا سریال رو برای زیرنویس فارسی بنویس…"
 NO_RESULTS_TEXT = "زیرنویسی پیدا نشد؛ با املای انگلیسی دیگری امتحان کن."
+# no SUBDL_API_KEY on the host — source-neutral on purpose, the owner learns the
+# reason from the dashboard and the startup log
+DISABLED_TEXT = "😅 بخش زیرنویس فعلاً در دسترس نیست؛ کمی بعد دوباره تلاش کن."
 
 
 class SubtitleSearchStates(StatesGroup):
@@ -64,13 +68,17 @@ async def handle_subtitle_search(
     message: Message,
     bot: Bot,
     state: FSMContext,
-    subkade: SubkadeClient,
+    subdl: SubdlClient,
     cache: TTLCache,
     card_state: CallbackState,
     cfg: Config,
     db: Database,
 ) -> None:
     query = (message.text or "").strip()
+    if not subdl.enabled:
+        await state.clear()
+        await message.answer(DISABLED_TEXT)
+        return
     cache_key = f"sub:search:{query.lower()}"
     if message.from_user is not None:
         db.increment_searches(message.from_user.id)
@@ -79,7 +87,7 @@ async def handle_subtitle_search(
     if results is None:
         async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
             status = await send_searching_status(message)
-            results = await subkade.search(query)
+            results = await subdl.search(query)
             await cache.set(cache_key, results, cfg.search_ttl)
     await state.clear()
     if not results:

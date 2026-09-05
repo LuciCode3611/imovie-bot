@@ -3,6 +3,7 @@
 Personal Telegram bot for searching zarfilm.com and retrieving direct download
 links, restricted to a small allowlist (owner + friends). Zarfilm has no API;
 the bot scrapes its WordPress pages over HTTPS with a logged-in session.
+Persian subtitles are the exception: they come from the SubDL API.
 
 ## Architecture
 
@@ -11,10 +12,10 @@ Layered, exactly this layout:
 ```
 src/
     handlers/       # aiogram routers: search, callbacks, common (start/help/errors), middleware
-    services/       # zarfilm HTTP client + parsers, message formatting
+    services/       # zarfilm (HTML) + SubDL (JSON) clients and parsers, message formatting
     repos/          # in-memory TTL cache (v1). No database yet — a later SQLite index goes behind the same interface
-    models/         # Pydantic models: MovieSummary, MovieDetails, DownloadLink, Config
-    exceptions.py   # ZarfilmError base + AuthError, SessionExpiredError, ParseError, NotFoundError
+    models/         # Pydantic models: MovieSummary, MovieDetails, DownloadLink, SubtitleDetails, Config
+    exceptions.py   # ZarfilmError base + AuthError, SessionExpiredError, ParseError, NotFoundError; SubdlError for the subtitle API
     main.py         # entrypoint: build dispatcher, register routers, long polling
 ```
 
@@ -28,6 +29,7 @@ src/
 ## Domain rules
 
 - Direct links only: the bot sends zarfilm download URLs; it never re-uploads files to Telegram.
+- Subtitles: SubDL API, Persian (`FA`) only. `SUBDL_API_KEY` comes from the environment and stays server-side — download buttons are the public `dl.subdl.com` zip links with any query string stripped, so a key can never be published in a message. No key means the subtitle flow answers "unavailable" and the owner dashboard says why; the rest of the bot is unaffected.
 - Cookie-only sessions: the zarfilm login form is captcha-protected, so credentials are never used or stored and captchas are never solved. The only session supply is the `/login` admin command (owner pastes a browser cookie; the message is deleted immediately after reading it). The client restores the cookie from `session.json` and, on expiry, asks the owner to re-run `/login`.
 - Secrets (`.env`, session files) are never committed, never logged, never echoed into chats.
 - Scraping etiquette: in-memory TTL cache for searches and pages; space out requests; one search in flight per user.
