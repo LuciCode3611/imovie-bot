@@ -17,7 +17,7 @@ from src.handlers.card import EXPIRED_TEXT
 from src.handlers.common import edit_text_safely
 from src.models.config import Config
 from src.repos.cache import TTLCache
-from src.repos.state import CallbackState, SubtitleCardEntry
+from src.repos.state import CallbackState
 from src.services.formatting import subtitle_card_text, subtitle_root_keyboard
 from src.services.rich import rich_subtitle_message
 from src.services.subkade import SubkadeClient
